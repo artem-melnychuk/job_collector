@@ -246,7 +246,8 @@ exclusion:
   german_word_marker_threshold: 3
   # Was: drop Hybrid/On-site everywhere (remote-only). Relaxed 2026-09-06 —
   # candidate is now open to office/hybrid roles and relocation (staying in
-  # Nice without French isn't viable long-term), so work format is no longer
+  # the current country without speaking its language isn't viable
+  # long-term), so work format is no longer
   # an auto-reject signal — it's still recorded (work_mode) for manual_review
   # to weigh alongside everything else, just not filtered out before a human
   # sees it. Left empty rather than deleted so the mechanism stays available

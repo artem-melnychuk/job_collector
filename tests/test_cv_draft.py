@@ -27,7 +27,7 @@ class SystemPromptGuardrailTests(unittest.TestCase):
 
     def test_prompt_still_allows_genuine_timezone_overlap_claims(self) -> None:
         # The user's own correction: he's fine with "Ukraine time zone"-style
-        # phrasing (Nice is genuinely only ~1h from Kyiv) - only a claim of
+        # phrasing (his real city is genuinely only ~1h from Kyiv) - only a claim of
         # physically living/being based in Ukraine is the actual problem.
         self.assertIn("time-zone-overlap", SYSTEM_PROMPT)
         self.assertIn("fine", SYSTEM_PROMPT)
