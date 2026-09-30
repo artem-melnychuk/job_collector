@@ -246,15 +246,24 @@ def extract_salary(value: Any, text: str = "") -> str:
     # below). The two groups don't collide: thousands requires exactly 3
     # digits after the separator, decimal requires 1-2, so "45,000" (thousands)
     # and "45,50" (decimal) both still resolve correctly.
-    amount = r"\d{2,3}(?:[ .,]\d{3})?(?:[,.]\d{1,2})?"
+    # Djinni (2026-09-30) writes "50 000−75 000 грн" with a thin space
+    # (U+2009) or no-break space as the thousands separator, a Unicode minus
+    # (U+2212) between the bounds, and also "від 40 000 до 45 000 грн".
+    # None of these were recognized, so the regex latched onto the tail and
+    # stored "000 грн" (≈0 USD). An unseparated "40000" had the same problem,
+    # since the leading group only allowed 2-3 digits. The lookbehind keeps a
+    # match from starting in the middle of a longer number.
+    thousands_sep = r"[    .,]"
+    amount = rf"(?<!\d)(?:\d{{1,3}}(?:{thousands_sep}\d{{3}})+|\d{{2,}})(?:[,.]\d{{1,2}})?"
+    range_sep = r"(?:\s*[-–—−]\s*|\s+(?:до|to)\s+)"
     # грн/₴ added for Ukrainian job boards (work.ua, robota.ua) — postings there
     # quote salary as e.g. "30 000 – 40 000 грн" with no per-month/year suffix
     # (monthly pay is the unstated default convention on those sites).
     currency = r"(?:€|EUR|USD|\$|GBP|£|грн\.?|₴|UAH)"
     unit = r"(?:/\s*|\s+per\s+|\s+par\s+)(?:hour|heure|year|an|month|mois|day|jour|week|semaine)s?"
     patterns = (
-        rf"{amount}\s*(?:[-–—]\s*{amount})?\s*{currency}(?:\s*{unit})?",
-        rf"{currency}\s*{amount}(?:\s*[-–—]\s*{currency}?\s*{amount})?(?:\s*{unit})?",
+        rf"{amount}(?:{range_sep}{amount})?\s*{currency}(?:\s*{unit})?",
+        rf"{currency}\s*{amount}(?:\s*[-–—−]\s*{currency}?\s*{amount})?(?:\s*{unit})?",
     )
     for pattern in patterns:
         match = re.search(pattern, str(text or ""), re.IGNORECASE)

@@ -5,7 +5,7 @@ import shutil
 import unittest
 from pathlib import Path
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from core.logging import RunStats, write_run_log
 from core.models import JobRecord
@@ -27,6 +27,27 @@ def make_record(**overrides: str) -> JobRecord:
 
 
 class StorageTests(unittest.TestCase):
+    def test_save_deletes_obsolete_view_and_text_sheets(self) -> None:
+        # jobs_view/jobs_text were dropped 2026-09-30; an existing workbook
+        # still has them, and append mode would otherwise keep them forever.
+        path = Path("data/raw/_test_storage_obsolete.xlsx")
+        try:
+            workbook = Workbook()
+            workbook.active.title = "jobs_view"
+            workbook.create_sheet("jobs_text")
+            workbook.create_sheet("skills_gap")
+            workbook.save(path)
+
+            save_records([make_record()], path)
+
+            names = load_workbook(path).sheetnames
+            self.assertNotIn("jobs_view", names)
+            self.assertNotIn("jobs_text", names)
+            self.assertIn("skills_gap", names)  # other scripts' sheets survive
+        finally:
+            path.unlink(missing_ok=True)
+            path.with_suffix(".csv").unlink(missing_ok=True)
+
     def test_save_and_load_round_trip(self) -> None:
         path = Path("data/raw/_test_storage_run.xlsx")
         try:
@@ -38,8 +59,13 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(loaded[0].title, "Trading Analyst")
             self.assertTrue(path.exists())
             self.assertTrue(path.with_suffix(".csv").exists())
-            workbook = load_workbook(path, read_only=True)
-            self.assertEqual(workbook.sheetnames, ["jobs_master", "jobs_view", "jobs_text", "manual_review"])
+            workbook = load_workbook(path)
+            # Working tab first and visible; pipeline data hidden (see
+            # core/storage.py:arrange_workbook_tabs).
+            self.assertEqual(workbook.sheetnames, ["manual_review", "jobs_master"])
+            self.assertEqual(workbook["manual_review"].sheet_state, "visible")
+            self.assertEqual(workbook["jobs_master"].sheet_state, "hidden")
+            self.assertEqual(workbook.active.title, "manual_review")
             workbook.close()
         finally:
             path.unlink(missing_ok=True)
@@ -300,6 +326,12 @@ class AvailabilityTests(unittest.TestCase):
         self.assertEqual(detect_generic_availability(404, "Not found"), "closed")
         self.assertEqual(detect_generic_availability(200, "Open role"), "active")
         self.assertEqual(detect_generic_availability(None, ""), "unknown")
+
+    def test_generic_availability_detects_closed_djinni_banner(self) -> None:
+        # Regression: Djinni returns HTTP 200 for a closed posting, only the
+        # banner text says so. Both UI languages seen live on 2026-09-30.
+        self.assertEqual(detect_generic_availability(200, "Data Analyst\n  The job ad is no longer active\n"), "closed")
+        self.assertEqual(detect_generic_availability(200, "Data Analyst\n  Ця вакансія зараз неактивна.\n"), "closed")
 
     def test_ats_reference_and_job_matching(self) -> None:
         self.assertEqual(parse_ats_board("ATS: Greenhouse; board: coinbase"), ("greenhouse", "coinbase"))

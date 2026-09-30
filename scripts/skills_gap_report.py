@@ -22,6 +22,7 @@ from core.skill_recommendations import (
     posting_text,
 )
 from core.skills_gap import build_rejection_report, build_skill_gap_report
+from core.storage import arrange_workbook_tabs
 
 # A skill mentioned in only one near-fit posting could just be that one
 # employer's quirk; recurring across at least this many postings is a real,
@@ -211,6 +212,7 @@ def main() -> int:
 
     _write_report_sheet(workbook, skill_report, rejection_report)
     _write_recommendations_sheet(workbook, recommendations, len(market_rows))
+    arrange_workbook_tabs(workbook)
     workbook.save(path)
     print(f"\nSaved 'skills_gap' and 'skill_recommendations' sheets in {path}")
 

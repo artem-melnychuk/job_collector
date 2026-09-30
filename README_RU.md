@@ -77,7 +77,7 @@ English version: [README.md](README.md). Рабочие заметки для р
 - `data/raw/` — отдельные файлы каждого запуска;
 - `data/processed/crypto_jobs_clean_v1.xlsx` и `.csv` — накопительный датасет.
 
-Листы processed XLSX: `jobs_master` (полная таблица), `jobs_view` (компактный вид), `jobs_text` (описания и ссылки), `manual_review` (ручная оценка соответствия, жёлтые поля заполняются вручную), `skills_gap` и `skill_recommendations` (отчёты), `active_near_fit` (живые подходящие вакансии), `applications` (статусы откликов).
+Листы processed XLSX: `jobs_master` (полная таблица, скрыта), `manual_review` (ручная оценка соответствия, жёлтые поля заполняются вручную), `skills_gap` и `skill_recommendations` (отчёты), `active_near_fit` (живые подходящие вакансии), `applications` (статусы откликов).
 
 ## Ограничения
 

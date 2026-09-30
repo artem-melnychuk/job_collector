@@ -5,7 +5,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from core.applications import DraftFile, build_applications_rows, scan_draft_files
+from core.applications import DraftFile, apply_applied_marks, build_applications_rows, scan_draft_files, url_key
 from core.cv_review import extract_verdict
 from core.models import JobRecord
 
@@ -85,11 +85,84 @@ class BuildApplicationsRowsTests(unittest.TestCase):
         self.assertEqual(rows[0]["pdf_ready"], "Нет")
         self.assertEqual(rows[0]["status"], "rejected")
 
+    def test_hand_added_row_without_draft_is_kept_and_matched_by_url(self) -> None:
+        # Regression (2026-09-30): the user typed a Collectly row (company +
+        # URL + status, no job_id, no draft). Rebuilding the sheet from draft
+        # files used to drop it. It is kept, and re-keyed to the dataset's
+        # job_id through its URL.
+        records = {**self.records_by_id,
+                   "job_b": JobRecord(job_id="job_b", title="Analytics Engineer", company="Collectly",
+                                      url="https://jobs.lever.co/CollectlyInc/abc")}
+        existing = {url_key("https://jobs.lever.co/CollectlyInc/abc/"): {
+            "company": "CollectlyInc", "url": "https://jobs.lever.co/CollectlyInc/abc/",
+            "status": "sent", "notes": "", "date_added": "2026-09-30 00:00:00"}}
+        rows = build_applications_rows(self.drafts, records, existing, today=date(2026, 10, 1))
+        manual = [row for row in rows if row["job_id"] == "job_b"]
+        self.assertEqual(len(manual), 1)
+        self.assertEqual(manual[0]["company"], "Collectly")
+        self.assertEqual(manual[0]["status"], "sent")
+        self.assertEqual(manual[0]["date_added"], "2026-09-30")
+        self.assertEqual(manual[0]["pdf_ready"], "")
+
+    def test_hand_added_row_outside_dataset_keeps_typed_fields(self) -> None:
+        existing = {url_key("https://www.linkedin.com/jobs/view/123/"): {
+            "title": "BI Analyst", "company": "SomeCo", "url": "https://www.linkedin.com/jobs/view/123/",
+            "status": "", "notes": "Easy Apply", "date_added": ""}}
+        rows = build_applications_rows([], {}, existing, today=date(2026, 10, 1))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["job_id"], "")
+        self.assertEqual(rows[0]["company"], "SomeCo")
+        self.assertEqual(rows[0]["status"], "sent")  # a typed-in row means it was sent
+        self.assertEqual(rows[0]["date_added"], "2026-10-01")
+
+    def test_empty_date_cells_stay_empty_not_nat(self) -> None:
+        # pandas reads an empty date cell as NaT; str(NaT) is "NaT".
+        import pandas as pd
+        existing = {url_key("https://x.com/1"): {"company": "A", "url": "https://x.com/1", "status": "sent",
+                                                  "date_sent": pd.NaT, "date_added": pd.NaT}}
+        rows = build_applications_rows([], {}, existing, today=date(2026, 10, 1))
+        self.assertEqual(rows[0]["date_sent"], "")
+        self.assertEqual(rows[0]["date_added"], "2026-10-01")
+
+    def test_leftover_draft_row_without_file_is_dropped(self) -> None:
+        existing = {"job_gone": {"status": "draft", "notes": "", "date_added": "2026-09-15"}}
+        rows = build_applications_rows([], {}, existing, today=date(2026, 10, 1))
+        self.assertEqual(rows, [])
+
     def test_missing_record_leaves_title_company_url_blank(self) -> None:
         drafts = [DraftFile(job_id="ghost_job", review_verdict="", pdf_ready=False)]
         rows = build_applications_rows(drafts, records_by_id={}, existing={}, today=date(2026, 9, 15))
         self.assertEqual(rows[0]["title"], "")
         self.assertEqual(rows[0]["company"], "")
+
+
+
+class ApplyAppliedMarksTests(unittest.TestCase):
+    # The user marks "Да" (or a date) in manual_review / active_near_fit
+    # after applying; the log is filled from those marks, never by hand.
+    def test_mark_on_unlogged_posting_adds_sent_row_dated_today(self) -> None:
+        merged = apply_applied_marks({}, {"job_x": "Да"}, today=date(2026, 10, 1))
+        self.assertEqual(merged["job_x"]["status"], "sent")
+        self.assertEqual(merged["job_x"]["date_sent"], "2026-10-01")
+
+    def test_typed_date_is_used_as_date_sent(self) -> None:
+        merged = apply_applied_marks({}, {"job_x": "2026-09-28"}, today=date(2026, 10, 1))
+        self.assertEqual(merged["job_x"]["date_sent"], "2026-09-28")
+
+    def test_draft_becomes_sent_but_decided_rows_are_left_alone(self) -> None:
+        existing = {
+            "job_draft": {"status": "draft", "notes": "n"},
+            "job_rejected": {"status": "rejected", "notes": "closed"},
+            "job_sent": {"status": "sent", "date_sent": "2026-09-20"},
+        }
+        marks = {"job_draft": "Да", "job_rejected": "Да", "job_sent": "Да", "job_blank": ""}
+        merged = apply_applied_marks(existing, marks, today=date(2026, 10, 1))
+        self.assertEqual(merged["job_draft"]["status"], "sent")
+        self.assertEqual(merged["job_draft"]["notes"], "n")
+        self.assertEqual(merged["job_rejected"]["status"], "rejected")
+        self.assertEqual(merged["job_sent"]["date_sent"], "2026-09-20")
+        self.assertNotIn("job_blank", merged)
+        self.assertEqual(existing["job_draft"]["status"], "draft")  # input not mutated
 
 
 if __name__ == "__main__":

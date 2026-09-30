@@ -17,52 +17,10 @@ from core.models import JOB_RECORD_COLUMNS, JobRecord
 
 TRANSIENT_FIELDS = {"job_id", "date_collected", "status", "note", "search_query"}
 
-VIEW_COLUMNS = (
-    "job_id",
-    "source",
-    "title",
-    "company",
-    "country",
-    "city_region",
-    "city",
-    "region",
-    "work_format",
-    "salary",
-    "salary_usd_equivalent",
-    "contract_type",
-    "availability_status",
-    "date_published",
-    "job_category",
-    "role_family",
-    "seniority",
-    "skills_all",
-    "required_skills",
-    "preferred_skills",
-    "fit_score",
-    "search_query",
-    "url",
-)
-
-TEXT_COLUMNS = (
-    "job_id",
-    "source",
-    "title",
-    "company",
-    "full_text",
-    "note",
-    "role_family",
-    "role_subcategory",
-    "seniority",
-    "years_experience_min",
-    "years_experience_max",
-    "skills_all",
-    "required_skills",
-    "preferred_skills",
-    "analysis_note",
-    "fit_score",
-    "fit_reasoning",
-    "url",
-)
+# jobs_view and jobs_text (a column subset and a long-text subset of
+# jobs_master, for reading only - no code ever read them) were dropped on
+# 2026-09-30 at the user's request; save_records deletes leftover copies.
+OBSOLETE_SHEETS = ("jobs_view", "jobs_text")
 
 MANUAL_REVIEW_COLUMNS = (
     "job_id",
@@ -78,6 +36,7 @@ MANUAL_REVIEW_COLUMNS = (
     "seniority",
     "personal_fit",
     "decision",
+    "applied",
     "should_be_filtered",
     "french_required",
     "language_notes",
@@ -90,8 +49,12 @@ MANUAL_REVIEW_COLUMNS = (
     "review_notes",
 )
 
+# `applied`: the user marks "Да" (or types the date) once they have sent an
+# application; scripts/applications_tracker.py turns every mark into a
+# `sent` row in the applications sheet, so the log never has to be typed.
 MANUAL_INPUT_COLUMNS = (
     "decision",
+    "applied",
     "should_be_filtered",
     "french_required",
     "language_notes",
@@ -212,6 +175,7 @@ def _style_manual_review_sheet(worksheet) -> None:
 
     validations = {
         "decision": '"Подходит,Возможно,Не подходит"',
+        "applied": '"Да"',
         "should_be_filtered": '"Да,Нет,Неясно"',
         "french_required": '"Да,Нет,Неясно"',
         "work_mode": '"Remote,Hybrid,Office,Неясно"',
@@ -249,6 +213,33 @@ def _style_manual_review_sheet(worksheet) -> None:
     worksheet.auto_filter.ref = worksheet.dimensions
 
 
+# The three tabs the user works in day to day, in this order: where to apply,
+# the log of applications, and grading newly collected postings. Everything
+# else in the processed workbook is pipeline data or occasional analysis, so
+# it is hidden (not deleted - Excel's "Unhide" brings it back). Every script
+# that writes this workbook calls arrange_workbook_tabs() before saving,
+# because a replaced sheet comes back visible and at the end of the tab list.
+WORKING_SHEETS = ("active_near_fit", "applications", "manual_review")
+HIDDEN_SHEETS = ("jobs_master", "skills_gap", "skill_recommendations")
+
+
+def arrange_workbook_tabs(book) -> None:
+    """Put WORKING_SHEETS first, hide HIDDEN_SHEETS, open on the first tab."""
+    for position, name in enumerate(name for name in WORKING_SHEETS if name in book.sheetnames):
+        book.move_sheet(name, offset=position - book.sheetnames.index(name))
+    visible = []
+    for worksheet in book.worksheets:
+        worksheet.sheet_state = "hidden" if worksheet.title in HIDDEN_SHEETS else "visible"
+        worksheet.sheet_view.tabSelected = False
+        if worksheet.sheet_state == "visible":
+            visible.append(worksheet)
+    if not visible:  # Excel refuses a workbook with no visible sheet
+        book.worksheets[0].sheet_state = "visible"
+        visible.append(book.worksheets[0])
+    book.active = book.worksheets.index(visible[0])
+    visible[0].sheet_view.tabSelected = True
+
+
 def save_records(
     records: Iterable[JobRecord],
     output_path: Path,
@@ -278,10 +269,12 @@ def save_records(
             _write_sheet(dataframe, writer, "raw_jobs")
         else:
             _write_sheet(dataframe, writer, "jobs_master")
-            _write_sheet(dataframe.loc[:, [column for column in VIEW_COLUMNS if column in dataframe]], writer, "jobs_view")
-            _write_sheet(dataframe.loc[:, [column for column in TEXT_COLUMNS if column in dataframe]], writer, "jobs_text")
+            for name in OBSOLETE_SHEETS:
+                if name in writer.book.sheetnames:
+                    del writer.book[name]
             _write_sheet(_manual_review_dataframe(records, existing_manual), writer, "manual_review")
             _style_manual_review_sheet(writer.book["manual_review"])
+            arrange_workbook_tabs(writer.book)
 
     return output_path, csv_path
 

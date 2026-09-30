@@ -18,6 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import openpyxl
 import pandas as pd
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Font, PatternFill
@@ -27,14 +28,18 @@ from core.applications import (
     APPLICATIONS_COLUMNS,
     APPLICATIONS_INPUT_COLUMNS,
     STATUS_OPTIONS,
+    apply_applied_marks,
     build_applications_rows,
+    url_key,
     scan_draft_files,
 )
-from core.storage import load_records
+from core.storage import arrange_workbook_tabs, load_manual_review, load_records
+from scripts.active_near_fit_report import copy_applied_marks, refresh_active_near_fit
 
 DATA_PATH = PROJECT_ROOT / "data" / "processed" / "crypto_jobs_clean_v1.xlsx"
 DEFAULT_DRAFTS_DIR = PROJECT_ROOT / "CV" / "drafts"
 SHEET_NAME = "applications"
+HAND_ENTRY_ROWS = 300
 
 STATUS_FILLS = {
     "draft": PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid"),
@@ -58,12 +63,18 @@ def load_existing_applications(path: Path) -> dict[str, dict[str, str]]:
         return {}
     result = {}
     for _, row in dataframe.iterrows():
-        job_id = str(row.get("job_id", "")).strip()
-        if job_id and job_id.casefold() != "nan":
-            result[job_id] = {
-                column: ("" if isinstance(value, float) and value != value else value)
-                for column, value in row.to_dict().items()
-            }
+        values = {
+            column: ("" if isinstance(value, float) and value != value else value)
+            for column, value in row.to_dict().items()
+        }
+        job_id = str(values.get("job_id", "")).strip()
+        url = str(values.get("url", "")).strip()
+        # A row typed in by hand often has only a URL (the job_id is an
+        # internal hash nobody knows); key it by URL so it is not lost.
+        if job_id:
+            result[job_id] = values
+        elif url:
+            result[url_key(url)] = values
     return result
 
 
@@ -95,36 +106,54 @@ def write_applications_sheet(path: Path, rows: list[dict[str, str]]) -> None:
         status_column_letter = sheet.cell(1, APPLICATIONS_COLUMNS.index("status") + 1).column_letter
         validation = DataValidation(type="list", formula1=f'"{",".join(STATUS_OPTIONS)}"', allow_blank=False)
         sheet.add_data_validation(validation)
-        validation.add(f"{status_column_letter}2:{status_column_letter}{max(sheet.max_row, 2)}")
+        # Reach well past the last row, so a row the user types in by hand
+        # (an application sent without a draft) gets the dropdown and colors.
+        last_row = max(sheet.max_row, 2) + HAND_ENTRY_ROWS
+        validation.add(f"{status_column_letter}2:{status_column_letter}{last_row}")
 
         last_column_letter = sheet.cell(1, len(APPLICATIONS_COLUMNS)).column_letter
-        data_range = f"A2:{last_column_letter}{max(sheet.max_row, 2)}"
+        data_range = f"A2:{last_column_letter}{last_row}"
         for status, fill in STATUS_FILLS.items():
             sheet.conditional_formatting.add(
                 data_range,
                 FormulaRule(formula=[f'${status_column_letter}2="{status}"'], fill=fill),
             )
+        arrange_workbook_tabs(writer.book)
 
 
 def main() -> int:
+    """Sync the whole applications workflow in one run:
+
+    1. `applied` marks typed into active_near_fit are copied to manual_review;
+    2. every manual_review `applied` mark becomes a `sent` row here;
+    3. active_near_fit is rebuilt without the postings now handled.
+    """
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
+    workbook = openpyxl.load_workbook(DATA_PATH)
+    copied = copy_applied_marks(workbook)
+    if copied:
+        workbook.save(DATA_PATH)
+        print(f"Copied {copied} 'applied' mark(s) from active_near_fit to manual_review")
+    workbook.close()
+
     records_by_id = {record.job_id: record for record in load_records(DATA_PATH)}
     drafts = scan_draft_files(DEFAULT_DRAFTS_DIR)
-    existing = load_existing_applications(DATA_PATH)
+    marks = {job_id: row.get("applied") for job_id, row in load_manual_review(DATA_PATH).items()}
+    existing = apply_applied_marks(load_existing_applications(DATA_PATH), marks)
     rows = build_applications_rows(drafts, records_by_id, existing)
-
-    if not rows:
-        print(f"No draft files found in {DEFAULT_DRAFTS_DIR}")
-        return 0
-
     write_applications_sheet(DATA_PATH, rows)
 
-    print(f"Applications tracked: {len(rows)}")
+    workbook = openpyxl.load_workbook(DATA_PATH)
+    to_apply = refresh_active_near_fit(workbook)
+    workbook.save(DATA_PATH)
+
+    print(f"Applications logged: {len(rows)}")
     for row in rows:
-        print(f"  [{row['status']:>8}] {row['title']} — {row['company']} (review: {row['review_verdict'] or 'none'}, pdf: {row['pdf_ready']})")
-    print(f"Saved '{SHEET_NAME}' sheet in {DATA_PATH}")
+        sent = f", sent {row['date_sent']}" if row["date_sent"] else ""
+        print(f"  [{row['status']:>8}] {row['company']} — {row['title']}{sent}")
+    print(f"Still to apply to (active_near_fit): {len(to_apply)}")
     return 0
 
 

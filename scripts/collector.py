@@ -456,6 +456,12 @@ def detect_generic_availability(http_status: int | None, body_text: str) -> str:
         "position has been filled",
         "page not found",
         "404 not found",
+        # Djinni serves a closed posting as a normal HTTP 200 page with this
+        # banner (English / Ukrainian UI). Missing until 2026-09-30, so every
+        # closed Djinni posting was reported "active" - the user found 4 of 4
+        # "active" drafts already closed when trying to apply.
+        "the job ad is no longer active",
+        "ця вакансія зараз неактивна",
     )
     if http_status in {404, 410} or any(marker in lowered for marker in closed_markers):
         return "closed"

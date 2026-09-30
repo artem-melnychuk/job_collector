@@ -78,6 +78,15 @@ class MetadataTests(unittest.TestCase):
         self.assertEqual(extract_salary({}, "Зарплата: 30 000 – 40 000 грн"), "30 000 – 40 000 грн")
         self.assertEqual(extract_salary({}, "Оплата 25 000 ₴"), "25 000 ₴")
 
+    def test_extract_salary_reads_djinni_thin_space_and_range_formats(self) -> None:
+        # Regression (2026-09-30): real Djinni text uses a thin space (U+2009)
+        # as the thousands separator, a Unicode minus (U+2212) or "від ... до"
+        # for ranges. All of these used to come out as "000 грн".
+        self.assertEqual(extract_salary({}, "Зарплата 50 000−75 000 грн"), "50 000−75 000 грн")
+        self.assertEqual(extract_salary({}, "від 40 000 до\xa045 000 грн."), "40 000 до 45 000 грн.")
+        self.assertEqual(extract_salary({}, "Оклад 40000 грн"), "40000 грн")
+        self.assertEqual(normalize_salary_usd("50 000−75 000 грн"), "≈1,200-1,800 USD")
+
     def test_salary_reads_nested_quantitative_value_with_unit(self) -> None:
         structured = {"currency": "USD", "value": {"minValue": 80, "maxValue": 90, "unitText": "HOUR"}}
         self.assertEqual(extract_salary(structured), "80-90 USD/hour")
