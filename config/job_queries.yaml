@@ -73,7 +73,13 @@ categories:
 # feed instead of erroring (see collectors/djinni.py docstring).
 djinni_categories:
   data:
-    - "Data Analytics"
+    # "Data Analytics" was the original value here. Removed 2026-09-29:
+    # Djinni stopped honoring it as a filter (djinni.co/jobs/?primary_keyword=
+    # Data%20Analytics now reads "Jobs at Djinni", and the RSS feed returns
+    # support/DevOps/marketing roles). The 29.09 collection pulled 13 such
+    # off-profile postings under this query. collectors/djinni.py now drops
+    # RSS items whose <category> does not match the keyword, so a future
+    # silent fallback shows up as an error instead of noise.
     # Added 2026-09-08: both manually verified at
     # djinni.co/jobs/?primary_keyword=<value> to actually filter (page title
     # reads "Jobs <Category>", not the generic "Jobs at Djinni" fallback that

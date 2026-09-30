@@ -13,6 +13,14 @@ config/job_queries.yaml's ``djinni_categories`` after confirming
 https://djinni.co/jobs/?primary_keyword=<value> actually filters results —
 the same trap already documented for WTTJ's topic page.
 
+A value that used to filter can also stop working: "Data Analytics" did on
+2026-09-29. Guard: every RSS ``<item>`` carries a ``<category>`` tag, and in a
+correctly filtered feed all items have ``<category>`` equal to the keyword
+(verified 100/100 for "Data Analyst" and "Business Analyst"), while the
+fallback feed mixes Marketing/Support/DevOps/etc. ``matches_primary_keyword``
+drops items from other categories, and a non-empty feed with zero matching
+items is reported as an error rather than an empty result.
+
 Company name: the RSS ``<description>`` has no structured company field, only
 free-text HTML — the old heuristic (first ``<strong>`` tag) was frequently
 wrong, since postings often open with a bolded restatement of the role
@@ -88,8 +96,15 @@ def parse_rss_items(xml_text: str) -> list[dict[str, str]]:
             "link": (item.findtext("link") or "").strip(),
             "description": item.findtext("description") or "",
             "pub_date": (item.findtext("pubDate") or "").strip(),
+            "categories": [(tag.text or "").strip() for tag in item.findall("category") if tag.text],
         })
     return items
+
+
+def matches_primary_keyword(item: dict[str, Any], primary_keyword: str) -> bool:
+    """Whether an RSS item belongs to the Djinni category the feed was filtered by."""
+    keyword = primary_keyword.strip().casefold()
+    return any(category.casefold() == keyword for category in item.get("categories", []))
 
 
 def extract_company(description_html: str) -> str:
@@ -199,7 +214,15 @@ class DjinniCollector(BaseCollector):
                     delay_min_seconds=delay_min, delay_max_seconds=delay_max,
                 )
                 xml_text = await response.text()
-                for item in parse_rss_items(xml_text):
+                items = parse_rss_items(xml_text)
+                matching = [item for item in items if matches_primary_keyword(item, query["query"])]
+                if items and not matching:
+                    raise ValueError(
+                        f"Djinni ignored primary_keyword={query['query']!r}: none of {len(items)} feed "
+                        "items is in that category (unfiltered fallback feed). Remove or replace it in "
+                        "config/job_queries.yaml djinni_categories."
+                    )
+                for item in matching:
                     if len(result.records) >= limit:
                         break
                     if not item["link"] or item["link"] in seen_urls:

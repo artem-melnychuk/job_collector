@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from core import skills_gap
 from core.skills_gap import (
     build_rejection_report,
     build_skill_gap_report,
@@ -28,10 +29,18 @@ class SkillGapReportTests(unittest.TestCase):
         self.assertEqual(report.gap["dbt"], 1)
 
     def test_partial_skill_tracked_separately(self) -> None:
-        jobs = [{"decision": "Возможно", "should_be_filtered": "Нет", "required_skills": "Python", "preferred_skills": ""}]
-        report = build_skill_gap_report(jobs)
-        self.assertEqual(report.partial["Python"], 1)
-        self.assertNotIn("Python", report.gap)
+        # PARTIAL_SKILLS is empty by default (see core/skills_gap.py); patch
+        # in a skill for this test rather than relying on the real resume's
+        # current state, which is a human-maintained document, not test data.
+        original = skills_gap.PARTIAL_SKILLS
+        skills_gap.PARTIAL_SKILLS = {"Python"}
+        try:
+            jobs = [{"decision": "Возможно", "should_be_filtered": "Нет", "required_skills": "Python", "preferred_skills": ""}]
+            report = build_skill_gap_report(jobs)
+            self.assertEqual(report.partial["Python"], 1)
+            self.assertNotIn("Python", report.gap)
+        finally:
+            skills_gap.PARTIAL_SKILLS = original
 
     def test_domain_context_terms_excluded_as_not_learnable(self) -> None:
         # "Crypto"/"Blockchain" mostly fire on company-description boilerplate,

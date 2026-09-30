@@ -18,20 +18,23 @@ from typing import Iterable, Mapping
 from core.analyzer import SKILL_RULES
 
 
-# From CV/resume_improved.html's own "Skills" section — the candidate's
+# From CV/resume_improved.html's own "Tools" section — the candidate's
 # actual current toolset, kept in sync manually since it's sourced from a
-# human-maintained document, not derived from collected postings.
+# human-maintained document, not derived from collected postings. Updated
+# 2026-09-28 for the rewritten resume: Python moved out of PARTIAL_SKILLS
+# now that the CV shows two real projects (Job Collector, Nice Events
+# Tracker) with automated tests, not just scripting.
 KNOWN_SKILLS = {
     "SQL",
     "Excel",
-    "Python",  # self-taught, pandas/scripting/unit testing — see PARTIAL_SKILLS
+    "Python",
 }
 
 # Skills the candidate has some exposure to but not at the depth postings
-# usually expect (e.g. Python here means pandas scripts, not software
-# engineering). Reported separately from a flat gap so "I have some Python"
-# isn't conflated with "I have zero Python".
-PARTIAL_SKILLS = {"Python"}
+# usually expect. Reported separately from a flat gap so "I have some X"
+# isn't conflated with "I have zero X". Empty for now — update by hand if
+# the resume's Tools section gains a skill at a basic level.
+PARTIAL_SKILLS: set[str] = set()
 
 # SKILL_RULES matches these on bare keyword presence, which mostly fires on
 # company-description boilerplate ("Binance, a leading blockchain ecosystem
