@@ -22,8 +22,8 @@ from core.analyzer import SKILL_RULES
 # actual current toolset, kept in sync manually since it's sourced from a
 # human-maintained document, not derived from collected postings. Updated
 # 2026-09-28 for the rewritten resume: Python moved out of PARTIAL_SKILLS
-# now that the CV shows two real projects (Job Collector, Nice Events
-# Tracker) with automated tests, not just scripting.
+# now that the CV shows two real personal projects with automated tests,
+# not just scripting.
 KNOWN_SKILLS = {
     "SQL",
     "Excel",
