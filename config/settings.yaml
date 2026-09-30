@@ -33,6 +33,19 @@ sources:
     # Публичная тематическая страница, использовавшаяся рабочим legacy-collector.
     search_url_template: "https://www.welcometothejungle.com/fr/pages/emploi-data-analyst?query={query}"
     max_pages: 15
+  jobicy:
+    # geo=france: only postings open to applicants in France (Europe, EMEA,
+    # Anywhere, or lists naming France). Broad tags; titles are then matched
+    # against job_queries.yaml locally. See collectors/jobicy.py.
+    geo: "france"
+    tags: ["analyst", "analytics"]
+    count: 100
+  himalayas:
+    # country=France also returns worldwide postings. Max 20 jobs per page;
+    # the API is rate limited and refreshed daily. See collectors/himalayas.py.
+    country: "France"
+    terms: ["analyst", "analytics"]
+    max_pages: 5
   work_ua:
     max_pages: 5
   robota_ua:
