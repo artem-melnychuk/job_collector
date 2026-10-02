@@ -48,6 +48,7 @@ class JobRecord:
     analysis_note: str = ""
     fit_score: str = ""
     fit_reasoning: str = ""
+    duplicate_group: str = ""
 
     def to_dict(self) -> dict[str, str]:
         """Return the record in the canonical export schema."""

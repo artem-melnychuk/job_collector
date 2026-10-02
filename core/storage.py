@@ -34,6 +34,7 @@ MANUAL_REVIEW_COLUMNS = (
     "job_category",
     "role_family",
     "seniority",
+    "duplicate_group",
     "personal_fit",
     "decision",
     "applied",
@@ -321,6 +322,7 @@ ANALYSIS_FIELDS = (
     "analysis_note",
     "fit_score",
     "fit_reasoning",
+    "duplicate_group",
 )
 
 

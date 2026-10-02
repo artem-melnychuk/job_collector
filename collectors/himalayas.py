@@ -37,7 +37,7 @@ from bs4 import BeautifulSoup
 from playwright.async_api import BrowserContext
 
 from collectors.base import BaseCollector, CollectorResult, get_with_retry, setting
-from core.ids import build_job_id
+from core.ids import build_job_id, normalize_url
 from core.metadata import query_matches
 from core.models import JobRecord
 
@@ -138,6 +138,52 @@ def record_from_job(job: dict[str, Any], query: dict[str, str]) -> JobRecord:
     )
     record.job_id = build_job_id(record)
     return record
+
+
+_COMPANY_SLUG_RE = re.compile(r"himalayas\.app/companies/([^/?#]+)/jobs/")
+
+
+def company_slug_from_url(url: str) -> str:
+    """Company slug from a posting URL like .../companies/<slug>/jobs/<job>."""
+    match = _COMPANY_SLUG_RE.search(str(url or ""))
+    return match.group(1) if match else ""
+
+
+def build_company_url(slug: str, page: int = 1) -> str:
+    return f"{HIMALAYAS_SEARCH_URL}?{urlencode({'company': slug, 'page': page})}"
+
+
+async def fetch_company_job_urls(
+    context: BrowserContext,
+    slug: str,
+    *,
+    timeout_ms: int,
+    retry_attempts: int = 0,
+    delay_min_seconds: float = 1.0,
+    delay_max_seconds: float = 1.0,
+    max_pages: int = 10,
+) -> set[str]:
+    """Normalized URLs of every posting the company currently has open.
+
+    Used by --check-availability: Himalayas job pages sit behind a
+    Cloudflare challenge (HTTP 403 "Just a moment...", seen 2026-10-01), so
+    opening a saved URL tells nothing, while the API's company filter lists
+    what is still live - the same approach as the Greenhouse/Lever check.
+    """
+    urls: set[str] = set()
+    for page in range(1, max_pages + 1):
+        if page > 1:
+            await asyncio.sleep(random.uniform(delay_min_seconds, max(delay_min_seconds, delay_max_seconds)))
+        response = await get_with_retry(
+            context, build_company_url(slug, page), timeout_ms=timeout_ms, retry_attempts=retry_attempts,
+            delay_min_seconds=delay_min_seconds, delay_max_seconds=delay_max_seconds,
+        )
+        jobs = parse_jobs(await response.json())
+        urls.update(normalize_url(clean_text(job.get("guid") or job.get("applicationLink"))) for job in jobs)
+        if len(jobs) < PAGE_SIZE:
+            break
+    urls.discard("")
+    return urls
 
 
 class HimalayasCollector(BaseCollector):

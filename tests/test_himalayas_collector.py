@@ -8,6 +8,8 @@ from collectors.himalayas import (
     PAGE_SIZE,
     HimalayasCollector,
     build_search_url,
+    company_slug_from_url,
+    fetch_company_job_urls,
     format_locations,
     format_pub_date,
     format_salary,
@@ -105,6 +107,33 @@ class HimalayasCollectorTests(unittest.TestCase):
         self.assertEqual([r.title for r in result.records], ["Data Analyst", "Senior Data Analyst"])
         self.assertEqual(len(context.request.urls), 2)
         self.assertTrue(all("country=France" in url for url in context.request.urls))
+
+
+    def test_company_slug_from_url(self) -> None:
+        self.assertEqual(company_slug_from_url("https://himalayas.app/companies/iwconnect/jobs/b2b-analyst"), "iwconnect")
+        self.assertEqual(company_slug_from_url("https://example.com/jobs/1"), "")
+
+    def test_fetch_company_job_urls_pages_until_short_page(self) -> None:
+        # Availability check: the company's open postings come from the API
+        # (job pages are behind Cloudflare). Full first page, short second.
+        class CompanyRequest:
+            def __init__(self) -> None:
+                self.urls: list[str] = []
+
+            async def get(self, url: str, timeout: int) -> FakeResponse:
+                self.urls.append(url)
+                page = int(parse_qs(urlsplit(url).query)["page"][0])
+                count = PAGE_SIZE if page == 1 else 3
+                jobs = [job("X", f"p{page}-{i}") for i in range(count)]
+                return FakeResponse({"jobs": jobs})
+
+        context = FakeContext({})
+        context.request = CompanyRequest()
+        urls = asyncio.run(fetch_company_job_urls(context, "flex", timeout_ms=1000,
+                                                  delay_min_seconds=0, delay_max_seconds=0))
+        self.assertEqual(len(urls), PAGE_SIZE + 3)
+        self.assertIn("https://himalayas.app/companies/flex/jobs/p2-0", urls)
+        self.assertEqual(len(context.request.urls), 2)
 
 
 if __name__ == "__main__":

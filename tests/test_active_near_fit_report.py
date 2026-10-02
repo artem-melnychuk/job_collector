@@ -73,5 +73,30 @@ class ActiveNearFitReportTests(unittest.TestCase):
         self.assertEqual([row["title"] for row in build_active_near_fit(rows)], ["open"])
 
 
+    def test_copies_of_one_job_show_once_with_other_sources(self) -> None:
+        base = {"decision": "Возможно", "should_be_filtered": "Нет", "availability_status": "active",
+                "duplicate_group": "g1", "title": "Data Analyst"}
+        rows = [
+            {**base, "job_id": "li_1", "url": "https://x.com/li", "source": "LinkedIn"},
+            {**base, "job_id": "cc_1", "url": "https://x.com/cc", "source": "Company Careers"},
+            {**base, "job_id": "solo", "url": "https://x.com/solo", "source": "Djinni", "duplicate_group": ""},
+        ]
+        kept = build_active_near_fit(rows)
+        self.assertEqual([row["job_id"] for row in kept], ["cc_1", "solo"])  # company's own ATS preferred
+        self.assertEqual(kept[0]["also_on"], "LinkedIn")
+
+    def test_applying_to_one_copy_hides_the_whole_group(self) -> None:
+        base = {"decision": "Подходит", "should_be_filtered": "Нет", "availability_status": "active",
+                "duplicate_group": "g1"}
+        rows = [
+            {**base, "job_id": "a", "url": "https://x.com/a", "source": "Jobicy"},
+            {**base, "job_id": "b", "url": "https://x.com/b", "source": "Himalayas"},
+        ]
+        applications = [{"job_id": "a", "url": "https://x.com/a", "status": "sent"}]
+        self.assertEqual(build_active_near_fit(rows, *handled_postings(applications)), [])
+        marked = [{**rows[0], "applied": "Да"}, rows[1]]
+        self.assertEqual(build_active_near_fit(marked), [])
+
+
 if __name__ == "__main__":
     unittest.main()

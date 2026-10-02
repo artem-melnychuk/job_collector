@@ -36,7 +36,7 @@ from collectors.wttj import (
 )
 from collectors.base import get_with_retry
 from collectors.djinni import DjinniCollector
-from collectors.himalayas import HimalayasCollector
+from collectors.himalayas import HimalayasCollector, company_slug_from_url, fetch_company_job_urls
 from collectors.jobicy import JobicyCollector
 from collectors.remoteok import RemoteOkCollector
 from collectors.weworkremotely import WeWorkRemotelyCollector
@@ -44,6 +44,7 @@ from collectors.work_ua import STEALTH_HEADERS, STEALTH_LOCALE, STEALTH_USER_AGE
 from collectors.robota_ua import RobotaUaCollector
 from core.config import load_configuration, select_queries
 from core.deduplication import deduplicate_records
+from core.ids import normalize_url
 from core.logging import RunStats, write_run_log
 from core.metadata import (
     extract_salary,
@@ -458,6 +459,42 @@ async def run_collection(args: argparse.Namespace) -> int:
     return 0
 
 
+# Sources whose salary comes only from the API's structured fields. Their
+# descriptions mention unrelated amounts (a "10 EUR" meal allowance, a
+# "USD 2,000" budget line), so guessing a salary from the text produced fake
+# figures; see collectors/jobicy.py and collectors/himalayas.py.
+STRUCTURED_SALARY_SOURCES = {"Jobicy", "Himalayas"}
+
+
+def backfill_saved_metadata(record) -> None:
+    """Fill gaps in an already-saved record before an availability check:
+    location/country, work format and salary inferred from its own text."""
+    if record.source == "Welcome to the Jungle":
+        location, country = normalize_saved_location(record.city_region)
+        if location:
+            record.city_region = location
+        if country:
+            record.country = country
+    elif not record.country:
+        record.country = infer_country(record.city_region)
+    inferred_work_format = infer_work_format(record.full_text)
+    if inferred_work_format != "Unknown" and record.work_format in {"", "Unknown", None}:
+        record.work_format = inferred_work_format
+        record.source_work_format = inferred_work_format
+    if not record.salary and record.source not in STRUCTURED_SALARY_SOURCES:
+        record.salary = extract_salary({}, record.full_text)
+
+
+def keep_known_closed(previous: str, current: str) -> str:
+    """A posting confirmed closed does not reopen, so an inconclusive recheck
+    ("unknown": an authwall, a rate limit, a timeout) must not erase that.
+    Seen 2026-10-01: a second LinkedIn pass in one morning was throttled and
+    turned 39 known-closed postings into "unknown"."""
+    if current == "unknown" and str(previous or "").strip() == "closed":
+        return "closed"
+    return current
+
+
 def detect_generic_availability(http_status: int | None, body_text: str) -> str:
     """Classify a career page when no source-specific detector is available."""
     lowered = body_text.casefold()
@@ -519,20 +556,7 @@ async def run_availability_check(args: argparse.Namespace) -> int:
     )
     records = load_records(processed_path)
     for record in records:
-        if record.source == "Welcome to the Jungle":
-            location, country = normalize_saved_location(record.city_region)
-            if location:
-                record.city_region = location
-            if country:
-                record.country = country
-        elif not record.country:
-            record.country = infer_country(record.city_region)
-        inferred_work_format = infer_work_format(record.full_text)
-        if inferred_work_format != "Unknown" and record.work_format in {"", "Unknown", None}:
-            record.work_format = inferred_work_format
-            record.source_work_format = inferred_work_format
-        if not record.salary:
-            record.salary = extract_salary({}, record.full_text)
+        backfill_saved_metadata(record)
     records_to_check = records[: args.check_limit]
     profile_dir = resolve_path(
         args.profile_dir
@@ -546,6 +570,7 @@ async def run_availability_check(args: argparse.Namespace) -> int:
     counts = {"active": 0, "closed": 0, "unknown": 0}
     errors = 0
     career_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    himalayas_cache: dict[str, set[str]] = {}
 
     profile_dir.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as playwright:
@@ -583,22 +608,36 @@ async def run_availability_check(args: argparse.Namespace) -> int:
                                     else parse_lever_jobs(payload)
                                 )
                             status = "active" if ats_job_is_present(record.url, ats, career_cache[cache_key]) else "closed"
+                    elif record.source == "Himalayas":
+                        # Job pages are behind a Cloudflare challenge; ask the
+                        # API which postings the company still lists instead.
+                        slug = company_slug_from_url(record.url)
+                        if not slug:
+                            status = "unknown"
+                        else:
+                            if slug not in himalayas_cache:
+                                himalayas_cache[slug] = await fetch_company_job_urls(
+                                    context, slug, timeout_ms=timeout_ms, retry_attempts=retry_attempts,
+                                    delay_min_seconds=delay_min, delay_max_seconds=delay_max,
+                                )
+                            status = "active" if normalize_url(record.url) in himalayas_cache[slug] else "closed"
                     else:
                         response = await page.goto(record.url, wait_until="domcontentloaded", timeout=timeout_ms)
                         await page.wait_for_timeout(delay_ms)
                         body_text = await page.locator("body").inner_text()
-                    if record.source == "LinkedIn":
-                        status = detect_linkedin_availability(page.url, body_text)
-                    elif record.source == "Welcome to the Jungle":
-                        status = detect_wttj_availability(page.url, body_text)
-                    elif record.source != "Company Careers":
-                        status = detect_generic_availability(response.status if response else None, body_text)
+                        if record.source == "LinkedIn":
+                            status = detect_linkedin_availability(page.url, body_text)
+                        elif record.source == "Welcome to the Jungle":
+                            status = detect_wttj_availability(page.url, body_text)
+                        else:
+                            status = detect_generic_availability(response.status if response else None, body_text)
+                    status = keep_known_closed(record.availability_status, status)
                     record.availability_status = status
                     counts[status] += 1
                 except Exception as error:
                     errors += 1
-                    record.availability_status = "unknown"
-                    counts["unknown"] += 1
+                    record.availability_status = keep_known_closed(record.availability_status, "unknown")
+                    counts[record.availability_status] += 1
                     print(f"Availability check failed: {record.url} ({error})")
         finally:
             await page.close()

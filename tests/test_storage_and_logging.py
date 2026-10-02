@@ -6,11 +6,25 @@ import unittest
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
 
 from core.logging import RunStats, write_run_log
 from core.models import JobRecord
-from core.storage import compute_personal_fit, load_manual_review, load_records, merge_records, save_records
-from scripts.collector import ats_job_is_present, detect_generic_availability, parse_ats_board
+from core.storage import (
+    MANUAL_REVIEW_COLUMNS,
+    compute_personal_fit,
+    load_manual_review,
+    load_records,
+    merge_records,
+    save_records,
+)
+from scripts.collector import (
+    ats_job_is_present,
+    backfill_saved_metadata,
+    detect_generic_availability,
+    keep_known_closed,
+    parse_ats_board,
+)
 
 
 def make_record(**overrides: str) -> JobRecord:
@@ -210,9 +224,12 @@ class StorageTests(unittest.TestCase):
                 for rule in cf_range.rules
                 for formula in rule.formula
             }
-            self.assertIn('$M2="Подходит"', formulas)
-            self.assertIn('$M2="Возможно"', formulas)
-            self.assertIn('$M2="Не подходит"', formulas)
+            # Locate the decision column by name: it moves whenever a column is
+            # added before it (duplicate_group was, on 2026-10-02).
+            letter = get_column_letter(MANUAL_REVIEW_COLUMNS.index("decision") + 1)
+            self.assertIn(f'${letter}2="Подходит"', formulas)
+            self.assertIn(f'${letter}2="Возможно"', formulas)
+            self.assertIn(f'${letter}2="Не подходит"', formulas)
             workbook.close()
         finally:
             path.unlink(missing_ok=True)
@@ -326,6 +343,24 @@ class AvailabilityTests(unittest.TestCase):
         self.assertEqual(detect_generic_availability(404, "Not found"), "closed")
         self.assertEqual(detect_generic_availability(200, "Open role"), "active")
         self.assertEqual(detect_generic_availability(None, ""), "unknown")
+
+    def test_backfill_does_not_guess_salary_for_structured_salary_sources(self) -> None:
+        # Regression (2026-10-01): the availability check re-filled Jobicy
+        # salaries from description text ("10 Eur" meal allowance) after the
+        # collector had deliberately left them empty.
+        text = "Meal allowance 10 EUR per day. Remote."
+        jobicy = make_record(source="Jobicy", salary="", full_text=text)
+        backfill_saved_metadata(jobicy)
+        self.assertEqual(jobicy.salary, "")
+        djinni = make_record(source="Djinni", salary="", full_text="Зарплата 50 000 грн")
+        backfill_saved_metadata(djinni)
+        self.assertEqual(djinni.salary, "50 000 грн")
+
+    def test_inconclusive_recheck_keeps_a_known_closed_status(self) -> None:
+        self.assertEqual(keep_known_closed("closed", "unknown"), "closed")
+        self.assertEqual(keep_known_closed("active", "unknown"), "unknown")
+        self.assertEqual(keep_known_closed("closed", "active"), "active")
+        self.assertEqual(keep_known_closed("", "closed"), "closed")
 
     def test_generic_availability_detects_closed_djinni_banner(self) -> None:
         # Regression: Djinni returns HTTP 200 for a closed posting, only the

@@ -33,9 +33,12 @@ SHEET_NAME = "active_near_fit"
 # needed to carry that mark over to manual_review.
 COLUMNS = (
     "applied", "decision", "title", "company", "salary", "salary_usd_equivalent", "work_mode",
-    "country", "city_region", "source", "seniority_manual", "main_reason", "review_notes", "url",
+    "country", "city_region", "source", "also_on", "seniority_manual", "main_reason", "review_notes", "url",
     "job_id",
 )
+# Preferred copy when one job is listed several times (see core/cross_dedup.py):
+# the company's own ATS first, then the boards with the most structured data.
+SOURCE_PREFERENCE = ("Company Careers", "Djinni", "Himalayas", "Jobicy", "We Work Remotely", "RemoteOK", "LinkedIn")
 APPLIED_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
 APPLIED_HEADER_FILL = PatternFill(start_color="FFD966", end_color="FFD966", fill_type="solid")
 # Statuses in the applications sheet that take a posting off the to-do list.
@@ -68,22 +71,68 @@ def handled_postings(application_rows: list[dict[str, str]]) -> tuple[set[str], 
     return job_ids, urls
 
 
+def _group(row: dict[str, str]) -> str:
+    return str(row.get("duplicate_group") or "").strip()
+
+
+def _source_rank(row: dict[str, str]) -> int:
+    source = str(row.get("source") or "")
+    return SOURCE_PREFERENCE.index(source) if source in SOURCE_PREFERENCE else len(SOURCE_PREFERENCE)
+
+
 def build_active_near_fit(
     joined: list[dict[str, str]],
     handled_job_ids: set[str] = frozenset(),
     handled_urls: set[str] = frozenset(),
 ) -> list[dict[str, str]]:
+    """Open near-fit postings not yet applied to, one row per job.
+
+    Copies of the same job (same `duplicate_group`, see core/cross_dedup.py)
+    count as one: applying to any copy takes the whole group off the list,
+    and of the copies still eligible only one is shown, with the other
+    copies' sources in `also_on`.
+    """
+    def handled(row: dict[str, str]) -> bool:
+        return (
+            str(row.get("job_id") or "") in handled_job_ids
+            or normalize_url(str(row.get("url") or "")) in handled_urls
+            or bool(str(row.get("applied") or "").strip())
+        )
+
+    handled_groups = {_group(row) for row in joined if _group(row) and handled(row)}
     kept = [
         row for row in joined
         if str(row.get("decision", "")).strip() in {"Подходит", "Возможно"}
         and str(row.get("should_be_filtered", "")).strip() != "Да"
         and str(row.get("availability_status", "")).strip() == "active"
-        and str(row.get("job_id") or "") not in handled_job_ids
-        and normalize_url(str(row.get("url") or "")) not in handled_urls
-        and not str(row.get("applied") or "").strip()
+        and not handled(row)
+        and _group(row) not in handled_groups
     ]
-    kept.sort(key=lambda row: (row.get("decision") != "Подходит", row.get("source", "")))
-    return kept
+
+    sources_by_group: dict[str, list[dict[str, str]]] = {}
+    for row in joined:
+        if _group(row):
+            sources_by_group.setdefault(_group(row), []).append(row)
+    best: dict[str, dict[str, str]] = {}
+    for row in kept:
+        group = _group(row)
+        if not group:
+            continue
+        current = best.get(group)
+        rank = (row.get("decision") != "Подходит", _source_rank(row), str(row.get("job_id") or ""))
+        if current is None or rank < (current.get("decision") != "Подходит", _source_rank(current), str(current.get("job_id") or "")):
+            best[group] = row
+    collapsed = []
+    for row in kept:
+        group = _group(row)
+        if group and best[group] is not row:
+            continue
+        if group:
+            others = [other for other in sources_by_group[group] if other is not row]
+            row = {**row, "also_on": ", ".join(sorted({str(other.get("source") or "") for other in others}))}
+        collapsed.append(row)
+    collapsed.sort(key=lambda row: (row.get("decision") != "Подходит", row.get("source", "")))
+    return collapsed
 
 
 def copy_applied_marks(workbook) -> int:
