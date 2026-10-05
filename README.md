@@ -18,7 +18,7 @@ SEARCH -> COLLECT -> DEDUPLICATE -> SAVE RAW -> MERGE INTO DATASET
         LLM STEPS (optional, paid): fit score -> draft -> separate review -> PDF + ATS check
 ```
 
-1. **Collect** postings from nine sources into one `JobRecord` schema.
+1. **Collect** postings from eleven sources (three of them opt-in) into one `JobRecord` schema.
 2. **Deduplicate.** Identity is `source + normalized URL`, so reruns are idempotent and hand-entered review columns survive every rerun.
 3. **Group copies across sources.** The same job on two boards, or reposted under a new link, gets a shared `duplicate_group` label. Copies are labelled, not deleted.
 4. **Filter** at collection time: language requirements (French, German), on-site roles in excluded countries, scam-like listings, minimum experience.
@@ -34,6 +34,7 @@ SEARCH -> COLLECT -> DEDUPLICATE -> SAVE RAW -> MERGE INTO DATASET
 |---|---|---|
 | Company career boards | Greenhouse and Lever public APIs | Boards are listed in `config/companies.yaml` |
 | Djinni | RSS | Ukrainian IT board; items outside the requested category are dropped, so a silently ignored filter shows up as an error instead of noise |
+| DOU.ua | RSS | Ukrainian IT community board; company, salary and remote/office are parsed from the structured feed title |
 | Jobicy | JSON API | Server-side eligibility filter (`geo`), titles matched locally |
 | Himalayas | JSON API | Server-side country filter, titles matched locally; availability checked through the API because job pages sit behind a bot challenge |
 | RemoteOK | JSON API | Remote-only; filtered locally by title |
@@ -41,6 +42,7 @@ SEARCH -> COLLECT -> DEDUPLICATE -> SAVE RAW -> MERGE INTO DATASET
 | LinkedIn | Playwright, JSON-LD first, CSS fallback | Authwalls and markup drift are expected failure modes |
 | Welcome to the Jungle | Playwright | Opt-in only (`--source wttj`) |
 | Work.ua, Robota.ua | Playwright | Implemented, but blocked by anti-bot protection; opt-in only |
+| Indeed | — | Checked, not addable: the RSS feed was removed (HTTP 404) and search sits behind a Cloudflare captcha (HTTP 403) |
 
 ## Quick start
 
@@ -119,7 +121,6 @@ tests/        unit and browser-integration tests (about 300)
 ## Limitations
 
 - LinkedIn and Welcome to the Jungle have no stable public API; markup changes will break selectors.
-- Some boards cannot be added at all: Indeed's feed is gone and its search page sits behind a captcha.
 - Skill extraction is rule-based. Short tokens (`R`) and generic words (`ML`) produce false positives; the recommendation report flags those skills instead of trusting them.
 - Cross-source grouping relies on company and title text; a company renamed between boards or a heavily reworded title will not be matched.
 - Market counts describe the collected sample (built around one search profile), not the whole job market.

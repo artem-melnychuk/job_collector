@@ -50,6 +50,8 @@ LEGAL_SUFFIXES = {
 REGION_WORDS = {
     "remote", "worldwide", "anywhere", "global", "international", "europe", "european", "emea",
     "apac", "latam", "americas", "union", "more", "and", "the", "hybrid", "onsite", "site",
+    # DOU.ua place words: "віддалено" (remote), "за кордоном" (abroad).
+    "віддалено", "кордоном",
 }
 TITLE_NOISE = {"remote", "hybrid"}
 

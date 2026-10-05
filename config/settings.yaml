@@ -40,6 +40,11 @@ sources:
     geo: "france"
     tags: ["analyst", "analytics"]
     count: 100
+  dou:
+    # DOU.ua RSS: one feed per category and per search phrase, 25 newest
+    # postings each. See collectors/dou.py.
+    categories: ["Analyst"]
+    searches: ["data analyst", "product analyst", "business analyst", "bi analyst"]
   himalayas:
     # country=France also returns worldwide postings. Max 20 jobs per page;
     # the API is rate limited and refreshed daily. See collectors/himalayas.py.

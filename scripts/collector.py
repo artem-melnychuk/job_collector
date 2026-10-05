@@ -36,6 +36,7 @@ from collectors.wttj import (
 )
 from collectors.base import get_with_retry
 from collectors.djinni import DjinniCollector
+from collectors.dou import DouCollector
 from collectors.himalayas import HimalayasCollector, company_slug_from_url, fetch_company_job_urls
 from collectors.jobicy import JobicyCollector
 from collectors.remoteok import RemoteOkCollector
@@ -80,7 +81,9 @@ from core.storage import load_records, merge_records, save_records
 # query_matches title check themselves before a record is ever returned, just
 # like Company Careers. Jobicy and Himalayas (added 2026-09-30) do the same:
 # their keyword searches are deliberately broad ("analyst"), so both run
-# query_matches on titles before returning a record. Work.ua/Robota.ua are excluded for the same reason as
+# query_matches on titles before returning a record. DOU (added 2026-10-05)
+# is excluded like Djinni: its category/search feeds are the relevance
+# filter and its titles are often Ukrainian. Work.ua/Robota.ua are excluded for the same reason as
 # Djinni: their own free-text keyword search IS the relevance filter, and
 # their titles are Ukrainian/Russian, so the English query_matches title
 # check would wrongly reject legitimate results.
@@ -93,7 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--source",
-        choices=["all", "linkedin", "wttj", "company_careers", "djinni", "remoteok", "weworkremotely",
+        choices=["all", "linkedin", "wttj", "company_careers", "djinni", "dou", "remoteok", "weworkremotely",
                  "jobicy", "himalayas", "work_ua", "robota_ua"],
         # "all" deliberately excludes wttj (see collect_sources) — it stays
         # selectable on its own for anyone who wants to re-check it.
@@ -232,7 +235,7 @@ async def collect_sources(
     # handful more requests in a later run (see collectors/work_ua.py
     # module docstring) — not dependable enough for an unattended run.
     selected = (
-        ["linkedin", "company_careers", "djinni", "remoteok", "weworkremotely", "jobicy", "himalayas"]
+        ["linkedin", "company_careers", "djinni", "dou", "remoteok", "weworkremotely", "jobicy", "himalayas"]
         if source == "all"
         else [source]
     )
@@ -260,6 +263,9 @@ async def collect_sources(
                     results.append(await collector.collect(context, queries, limit))
                 elif name == "weworkremotely":
                     collector = WeWorkRemotelyCollector(settings=settings)
+                    results.append(await collector.collect(context, queries, limit))
+                elif name == "dou":
+                    collector = DouCollector(settings=settings)
                     results.append(await collector.collect(context, queries, limit))
                 elif name == "jobicy":
                     collector = JobicyCollector(settings=settings)
