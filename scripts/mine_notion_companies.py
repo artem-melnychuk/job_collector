@@ -4,7 +4,7 @@ pagination, and save it as a CSV.
 Built for `https://agilefluent.notion.site/600-3654f3678247803192feca7cbddd7036`
 ("600+ companies with Russian-speaking roots"), mined by hand in an earlier
 session for Greenhouse/Lever `career_boards` candidates (see CLAUDE.md /
-PROJECT_HANDOFF_RU.md). That pass only covered ~100 of 599 rows because the
+docs/archive/PROJECT_HANDOFF_RU.md). That pass only covered ~100 of 599 rows because the
 interactive browser tool's cached element reference (`ref`) kept resolving to
 a stale screen position after the DOM grew/scrolled on each click, forcing a
 fresh screenshot before every single click. A plain Playwright script doesn't

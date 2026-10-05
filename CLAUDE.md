@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Note: `README_RU.md` contains the project narrative (purpose, status) in Russian. This file is the terse operational reference.
+Note: this file is the terse operational reference.
 
 ## Commands
 

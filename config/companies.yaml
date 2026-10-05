@@ -23,7 +23,7 @@ priority_companies:
     - "Chainalysis"
 
   # Added 2026-09-09 from mining a curated external list of 599 international
-  # companies "with Russian-speaking roots" (see PROJECT_HANDOFF_RU.md and
+  # companies "with Russian-speaking roots" (see docs/archive/PROJECT_HANDOFF_RU.md and
   # data/reference/notion_600_companies_greenhouse_lever.md for the source,
   # full candidate list, and methodology). Broader than pure crypto/trading —
   # matches the project's scope having already widened past crypto-only.

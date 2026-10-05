@@ -103,7 +103,7 @@ class CompanyCareersTests(unittest.TestCase):
     def test_greenhouse_record_maps_fields_from_a_real_shaped_payload(self) -> None:
         # Shaped after a real Coinbase boards-api response (fetched 2026-09-08):
         # Greenhouse has no structured work-format field, only a free-text
-        # `location.name` (see CLAUDE.md/PROJECT_HANDOFF_RU.md "Resolved" 2026-09-08).
+        # `location.name` (see CLAUDE.md "Resolved" 2026-09-08).
         job = {
             "absolute_url": "https://www.coinbase.com/careers/positions/8053751?gh_jid=8053751",
             "location": {"name": "Remote - Cyprus"},
@@ -146,7 +146,7 @@ class CompanyCareersTests(unittest.TestCase):
         self.assertEqual(record.country, "India")
 
     def test_greenhouse_record_leaves_work_format_unknown_for_a_bare_office_name(self) -> None:
-        # Documented gap (PROJECT_HANDOFF_RU.md 2026-09-08): a bare office
+        # Documented gap (CLAUDE.md "Resolved", 2026-09-08): a bare office
         # location with no Remote/Hybrid qualifier is usually on-site in
         # Greenhouse's convention, but this is not inferred - left "Unknown"
         # unless the description itself states the format.
