@@ -33,7 +33,6 @@ priority_companies:
     - "CoinsPaid"
     - "Collectly"
     - "MoonPay"
-    - "Outschool"
     - "Stackadapt"
     - "Truv"
     - "Xometry"
@@ -67,6 +66,11 @@ additional_companies: []
 #     as Djinni's primary_keyword trap.
 #   - VOLKA GAMES: excluded on relevance (pure Gamedev), not technical
 #     failure - board was never checked.
+#
+# Removed 2026-10-05:
+#   - Outschool: its Greenhouse board (slug "outschool") worked when added on
+#     2026-09-09 but has returned 404 on every run since 2026-10-01 (rechecked
+#     directly 2026-10-05). Re-add only if the company posts on a board again.
 
 # Maximum number of matching jobs collected from one configured company board per run.
 max_jobs_per_board: 10
@@ -129,9 +133,6 @@ career_boards:
   - company: "MoonPay"
     ats: "lever"
     slug: "moonpay"
-  - company: "Outschool"
-    ats: "greenhouse"
-    slug: "outschool"
   - company: "Stackadapt"
     ats: "greenhouse"
     slug: "stackadapt"

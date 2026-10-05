@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from core.cross_dedup import assign_duplicate_groups, normalize_company, normalize_title
+from core.cross_dedup import assign_duplicate_groups, inherit_group_decisions, normalize_company, normalize_title
 from core.models import JobRecord
 
 
@@ -74,6 +74,34 @@ class AssignDuplicateGroupsTests(unittest.TestCase):
             record("c", "Acme Labs", "Data Analyst"),
         ])
         self.assertEqual(set(result.values()), {""})
+
+
+
+class InheritGroupDecisionsTests(unittest.TestCase):
+    COLUMNS = ("decision", "should_be_filtered", "main_reason")
+
+    def row(self, job_id: str, group: str, decision: str = "", **extra) -> dict:
+        return {"job_id": job_id, "source": "Djinni", "duplicate_group": group, "decision": decision,
+                "should_be_filtered": "", "main_reason": "", "review_notes": "", "applied": "", **extra}
+
+    def test_ungraded_repost_takes_the_graded_copys_fields_with_a_note(self) -> None:
+        rows = [self.row("old", "g", "Возможно", main_reason="iGaming specifics", applied="Да"),
+                self.row("new", "g")]
+        inherit_group_decisions(rows, self.COLUMNS)
+        self.assertEqual(rows[1]["decision"], "Возможно")
+        self.assertEqual(rows[1]["main_reason"], "iGaming specifics")
+        self.assertIn("old", rows[1]["review_notes"])
+        self.assertEqual(rows[1]["applied"], "")  # never copied: one application, one log row
+
+    def test_conflicting_graded_copies_are_left_for_a_human(self) -> None:
+        rows = [self.row("a", "g", "Подходит"), self.row("b", "g", "Не подходит"), self.row("c", "g")]
+        inherit_group_decisions(rows, self.COLUMNS)
+        self.assertEqual(rows[2]["decision"], "")
+
+    def test_rows_outside_groups_are_untouched(self) -> None:
+        rows = [self.row("a", "", "Подходит"), self.row("b", "")]
+        inherit_group_decisions(rows, self.COLUMNS)
+        self.assertEqual(rows[1]["decision"], "")
 
 
 if __name__ == "__main__":

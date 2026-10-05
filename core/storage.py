@@ -11,6 +11,7 @@ from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from core.cross_dedup import inherit_group_decisions
 from core.ids import build_deduplication_key, build_job_id
 from core.models import JOB_RECORD_COLUMNS, JobRecord
 
@@ -67,6 +68,9 @@ MANUAL_INPUT_COLUMNS = (
     "main_reason",
     "review_notes",
 )
+
+
+INHERITED_REVIEW_COLUMNS = tuple(column for column in MANUAL_INPUT_COLUMNS if column not in {"applied", "review_notes"})
 
 
 def compute_personal_fit(decision: str, main_reason: str) -> str:
@@ -158,8 +162,12 @@ def _manual_review_dataframe(
             if column not in MANUAL_INPUT_COLUMNS
         }
         row.update({column: previous.get(column, "") for column in MANUAL_INPUT_COLUMNS})
-        row["personal_fit"] = compute_personal_fit(row.get("decision", ""), row.get("main_reason", ""))
         rows.append(row)
+    # Copies of one job (core/cross_dedup.py) share the grade given to any of
+    # them; "applied" and the notes themselves are not copied.
+    inherit_group_decisions(rows, INHERITED_REVIEW_COLUMNS)
+    for row in rows:
+        row["personal_fit"] = compute_personal_fit(row.get("decision", ""), row.get("main_reason", ""))
     return pd.DataFrame(rows, columns=MANUAL_REVIEW_COLUMNS)
 
 

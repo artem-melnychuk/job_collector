@@ -123,3 +123,40 @@ def assign_duplicate_groups(records: list[JobRecord]) -> list[JobRecord]:
         for member in group:
             group_of[id(member.record)] = label
     return [replace(record, duplicate_group=group_of.get(id(record), "")) for record in records]
+
+
+def inherit_group_decisions(rows: list[dict[str, object]], columns: tuple[str, ...]) -> list[dict[str, object]]:
+    """Copy a graded copy's manual_review fields to its ungraded copies.
+
+    `rows` are manual_review rows (each with job_id, source, duplicate_group,
+    decision, review_notes and the given input `columns`). When a group has
+    ungraded rows and every graded row agrees on `decision`, each ungraded
+    row gets `columns` from the first graded row (by job_id) and a note
+    naming where they came from. Graded copies that disagree are left alone:
+    that conflict is for a human. `applied` must not be in `columns`, or one
+    application would be logged once per copy. Added 2026-10-05 after two
+    reposts (TrueGroup, Growe Talents) came back ungraded although their
+    earlier copies had already been graded.
+    """
+    by_group: dict[str, list[dict[str, object]]] = {}
+    for row in rows:
+        group = str(row.get("duplicate_group") or "").strip()
+        if group:
+            by_group.setdefault(group, []).append(row)
+
+    for members in by_group.values():
+        graded = sorted((row for row in members if str(row.get("decision") or "").strip()),
+                        key=lambda row: str(row.get("job_id") or ""))
+        ungraded = [row for row in members if not str(row.get("decision") or "").strip()]
+        if not graded or not ungraded:
+            continue
+        if len({str(row.get("decision")).strip() for row in graded}) > 1:
+            continue
+        donor = graded[0]
+        note = f"Оценка перенесена с копии {donor.get('source', '')} ({donor.get('job_id', '')}): та же вакансия под другой ссылкой."
+        for row in ungraded:
+            for column in columns:
+                row[column] = donor.get(column, "")
+            row["review_notes"] = " ".join(part for part in (str(row.get("review_notes") or "").strip(), note) if part)
+    return rows
+
