@@ -151,6 +151,33 @@ class MetadataTests(unittest.TestCase):
         self.assertFalse(is_overqualified("Data Analyst", "Societe Generale, founded over 50 years ago", exclusion))
         self.assertFalse(is_overqualified("Data Analyst", "52 people clicked apply, 10 years running this event", exclusion))
 
+    def test_overqualified_ignores_calendar_years(self) -> None:
+        # Phrases from jobs_master (2026-10-05) that the analyzer read as years
+        # of experience. This filter needs the word "years" after the number,
+        # so it never read them; kept as a guard.
+        exclusion = {"min_years_experience": 3}
+        for text in (
+            "Wintermute was founded in 2017 and has successfully navigated",
+            "founded in 2012 and headquartered in",
+            "Best Workplaces in 2025 and recognized",
+            "Winter Intern 2027 - Analytics & Reporting",
+            "beginning in May 2027 and ending in August 2027",
+            "our Global 2000 and Fortune 500 customers",
+            "Founded in 2019 and fully distributed",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(is_overqualified("Data Analyst", text, exclusion))
+
+    def test_overqualified_ignores_implausible_year_counts(self) -> None:
+        # Regression: a bare \d{1,2} read the tail of "150" as 50 years, and
+        # nothing capped a company's age, so both rejected the posting.
+        exclusion = {"min_years_experience": 3}
+        self.assertFalse(is_overqualified("Data Analyst", "Our team has 150+ years of combined experience", exclusion))
+        self.assertFalse(is_overqualified("Data Analyst", "35 years of experience serving banks", exclusion))
+        self.assertTrue(
+            is_overqualified("Data Analyst", "150+ years of combined experience. You have 4+ years of experience", exclusion)
+        )
+
     def test_requires_french_detects_explicit_phrase_and_language_density(self) -> None:
         exclusion = {
             "french_phrases": ["français courant", "fluent in french"],
@@ -309,8 +336,9 @@ class MetadataTests(unittest.TestCase):
         self.assertEqual(normalize_salary_usd("£50,000/year"), "≈63,500 USD")
 
     def test_normalize_salary_usd_reads_european_decimal_comma(self) -> None:
-        # Regression (2026-10-05): agap2 Italia's "30.000,00 €" stored as
-        # "≈3,240,000 USD" because every separator was stripped as thousands.
+        # Regression (2026-10-05): a posting by Example Italia (name made up)
+        # gave "30.000,00 €", stored as "≈3,240,000 USD" because every
+        # separator was stripped as thousands.
         self.assertEqual(normalize_salary_usd("30.000,00 €"), "≈32,400 USD")
         self.assertEqual(normalize_salary_usd("€11,50/hour"), "≈12 USD")
         # Dot-thousands without decimals and US-style decimals still parse.

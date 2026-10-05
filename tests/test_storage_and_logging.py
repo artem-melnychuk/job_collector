@@ -444,3 +444,10 @@ class AvailabilityTests(unittest.TestCase):
         jobs = [{"id": 123, "absolute_url": "https://www.coinbase.com/careers/positions/123?gh_jid=123"}]
         self.assertTrue(ats_job_is_present("https://www.coinbase.com/careers/positions/123?gh_jid=123", "greenhouse", jobs))
         self.assertFalse(ats_job_is_present("https://www.coinbase.com/careers/positions/999?gh_jid=999", "greenhouse", jobs))
+
+    def test_bamboohr_job_is_matched_by_the_id_in_its_url(self) -> None:
+        # The BambooHR list has no URL field, only the id from /careers/<id>.
+        self.assertEqual(parse_ats_board("ATS: BambooHR; board: iwconnect"), ("bamboohr", "iwconnect"))
+        jobs = [{"id": "163", "jobOpeningName": "B2B Technical Business Analyst*"}]
+        self.assertTrue(ats_job_is_present("https://iwconnect.bamboohr.com/careers/163", "bamboohr", jobs))
+        self.assertFalse(ats_job_is_present("https://iwconnect.bamboohr.com/careers/16", "bamboohr", jobs))

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
-from core.metadata import normalize_salary_usd, split_city_region
+from core.metadata import MAX_EXPERIENCE_YEARS, normalize_salary_usd, split_city_region
 from core.models import JobRecord
 
 
@@ -108,15 +108,32 @@ def classify_role(record: JobRecord) -> tuple[str, str]:
     return "Other", "Other"
 
 
+# French "an"/"ans" needs the closing \b: without it "ans?" matched the start
+# of "and"/"analytics", so "founded in 2017 and" read as 2017 years. Italian
+# "anni"/"anno" used to get in through that same prefix match, so it is
+# listed explicitly. (?<!\d) keeps a match from starting mid-number, and
+# (?!\d+-year\b) skips the adjective in "a 4-year university/degree".
+_EXPERIENCE_YEARS_PATTERN = re.compile(
+    r"(?<!\d)(?!\d+-year\b)(\d+)\s*(?:\+|to|-)?\s*(\d*)\s*(?:years?|ans?|ann[io])\b"
+)
+# Ukrainian/Russian phrasing (Djinni.co postings): "3х років", "від 3
+# років", "1+ рік", "5 лет" — a separate pattern since the word for
+# "years" isn't a simple suffix variant of the English/French one.
+_EXPERIENCE_YEARS_PATTERN_UK_RU = re.compile(r"(?<!\d)(\d+)\s*х?\+?\s*(?:рок(?:и|ів|у)?|рік|лет|года?)")
+
+
+def _plausible_years(minimum: str, maximum: str) -> bool:
+    # Calendar years ("у 2015 році", "Global 2000 and") are not experience.
+    return all(int(value) <= MAX_EXPERIENCE_YEARS for value in (minimum, maximum) if value)
+
+
 def infer_experience_years(text: str) -> tuple[str, str]:
     lowered = text.casefold()
-    matches = re.findall(r"(\d+)\s*(?:\+|to|-)?\s*(\d*)\s*(?:years?|ans?)", lowered)
+    matches = [match for match in _EXPERIENCE_YEARS_PATTERN.findall(lowered) if _plausible_years(*match)]
     if not matches:
-        # Ukrainian/Russian phrasing (Djinni.co postings): "3х років", "від 3
-        # років", "1+ рік", "5 лет" — a separate pattern since the word for
-        # "years" isn't a simple suffix variant of the English/French one.
-        matches = re.findall(r"(\d+)\s*х?\+?\s*(?:рок(?:и|ів|у)?|рік|лет|года?)", lowered)
-        matches = [(value, "") for value in matches]
+        matches = [
+            (value, "") for value in _EXPERIENCE_YEARS_PATTERN_UK_RU.findall(lowered) if _plausible_years(value, "")
+        ]
     if not matches:
         return "", ""
     minimum, maximum = matches[0]

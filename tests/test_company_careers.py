@@ -1,19 +1,81 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 
 from collectors.company_careers import (
+    CompanyCareersCollector,
+    build_bamboohr_detail_url,
+    build_bamboohr_url,
+    build_board_url,
     build_greenhouse_url,
     build_lever_url,
     configured_career_boards,
     max_jobs_per_board,
+    parse_bamboohr_jobs,
     parse_greenhouse_jobs,
     parse_lever_jobs,
+    _bamboohr_record,
     _greenhouse_record,
     _lever_description,
     _lever_record,
     _lever_work_format,
 )
+
+
+class FakeJsonResponse:
+    def __init__(self, payload: object, status: int = 200) -> None:
+        self._payload = payload
+        self.status = status
+        self.ok = 200 <= status < 300
+
+    async def json(self) -> object:
+        return self._payload
+
+
+class FakeRequest:
+    def __init__(self, routes: dict[str, FakeJsonResponse]) -> None:
+        self.routes = routes
+        self.urls: list[str] = []
+
+    async def get(self, url: str, timeout: int) -> FakeJsonResponse:
+        self.urls.append(url)
+        return self.routes.get(url, FakeJsonResponse({}, status=404))
+
+
+class FakeContext:
+    def __init__(self, routes: dict[str, FakeJsonResponse]) -> None:
+        self.request = FakeRequest(routes)
+        self.pages: list[object] = []
+
+
+NO_DELAY = {"request": {"delay_min_seconds": 0, "delay_max_seconds": 0, "retry_attempts": 0}}
+IWCONNECT = {"company": "IWConnect", "ats": "bamboohr", "slug": "iwconnect", "host": ""}
+BUSINESS_ANALYST = {"query": "Business Analyst", "category": "data"}
+
+# Shaped after the live iwconnect.bamboohr.com responses of 2026-10-05.
+BAMBOOHR_REMOTE_LIST_ITEM = {
+    "id": "163",
+    "jobOpeningName": "B2B Technical Business Analyst*",
+    "departmentLabel": "Project and Delivery Management Team",
+    "employmentStatusLabel": "Contractor",
+    "location": {"city": None, "state": None},
+    "atsLocation": {"country": None, "state": None, "province": None, "city": None},
+    "isRemote": None,
+    "locationType": "1",
+}
+BAMBOOHR_REMOTE_OPENING = {
+    "jobOpeningShareUrl": "https://iwconnect.bamboohr.com/careers/163",
+    "jobOpeningName": "B2B Technical Business Analyst*",
+    "jobOpeningStatus": "Open",
+    "employmentStatusLabel": "Contractor",
+    "location": {"city": None, "state": None, "postalCode": None, "addressCountry": None},
+    "atsLocation": {"country": None, "countryId": None, "state": None, "city": None},
+    "description": "<p>Experience in <strong>SQL</strong>, data mapping and BI tools.</p>",
+    "compensation": None,
+    "datePosted": "2026-05-11",
+    "locationType": 1,
+}
 
 
 class CompanyCareersTests(unittest.TestCase):
@@ -38,6 +100,70 @@ class CompanyCareersTests(unittest.TestCase):
         ]})
         self.assertEqual(len(boards), 1)
         self.assertEqual(boards[0]["company"], "Coinbase")
+
+    def test_builds_bamboohr_urls(self) -> None:
+        self.assertEqual(build_bamboohr_url("iwconnect"), "https://iwconnect.bamboohr.com/careers/list")
+        self.assertEqual(build_bamboohr_detail_url("iwconnect", "163"), "https://iwconnect.bamboohr.com/careers/163/detail")
+        self.assertEqual(build_board_url(IWCONNECT), "https://iwconnect.bamboohr.com/careers/list")
+        # A configured EU Lever host is used, not the default one (which 404s).
+        eu_board = {"company": "Kaiko", "ats": "lever", "slug": "kaiko", "host": "https://api.eu.lever.co"}
+        self.assertEqual(build_board_url(eu_board), "https://api.eu.lever.co/v0/postings/kaiko?mode=json")
+
+    def test_bamboohr_parser_reads_the_result_list(self) -> None:
+        self.assertEqual(parse_bamboohr_jobs({"meta": {}, "result": [{"id": "1"}, "bad"]}), [{"id": "1"}])
+        self.assertEqual(parse_bamboohr_jobs([{"id": "1"}]), [])
+
+    def test_configured_boards_accept_bamboohr(self) -> None:
+        boards = configured_career_boards({"career_boards": [{"company": "IWConnect", "ats": "BambooHR", "slug": "iwconnect"}]})
+        self.assertEqual([(board["company"], board["ats"]) for board in boards], [("IWConnect", "bamboohr")])
+
+    def test_bamboohr_record_maps_a_remote_contractor_posting(self) -> None:
+        record = _bamboohr_record(BAMBOOHR_REMOTE_LIST_ITEM, BAMBOOHR_REMOTE_OPENING, IWCONNECT, BUSINESS_ANALYST)
+        self.assertEqual(record.title, "B2B Technical Business Analyst*")
+        self.assertEqual(record.company, "IWConnect")
+        self.assertEqual(record.work_format, "Remote")  # locationType 1
+        self.assertEqual(record.contract_type, "Contractor")
+        self.assertEqual(record.date_published, "2026-05-11")
+        self.assertEqual(record.url, "https://iwconnect.bamboohr.com/careers/163")
+        self.assertEqual((record.city_region, record.country, record.salary), ("", "", ""))
+        self.assertIn("SQL", record.full_text)
+        self.assertEqual(record.note, "ATS: BambooHR; board: iwconnect")
+
+    def test_bamboohr_record_reads_hybrid_and_office_location(self) -> None:
+        opening = {
+            "jobOpeningName": "Senior Data Engineer (Macedonia)",
+            "location": {"city": "Bitola, Skopje, Prilep, Ohrid", "state": None, "postalCode": "7000", "addressCountry": "Macedonia"},
+            "description": "<p>Lakehouse platforms.</p>",
+            "datePosted": "2024-07-09",
+            "locationType": 2,
+        }
+        record = _bamboohr_record({"id": "93"}, opening, IWCONNECT, BUSINESS_ANALYST)
+        self.assertEqual(record.work_format, "Hybrid")  # locationType 2
+        self.assertEqual(record.city_region, "Bitola, Skopje, Prilep, Ohrid, Macedonia")
+        self.assertEqual(record.country, "Macedonia")
+        self.assertEqual(record.url, "https://iwconnect.bamboohr.com/careers/93")  # built when no share URL
+
+    def test_bamboohr_record_reads_text_for_an_unseen_location_type(self) -> None:
+        opening = {"jobOpeningName": "Data Analyst", "description": "Fully remote role.", "locationType": 0}
+        self.assertEqual(_bamboohr_record({"id": "7"}, opening, IWCONNECT, BUSINESS_ANALYST).work_format, "Remote")
+
+    def test_collect_fetches_bamboohr_detail_only_for_matching_titles(self) -> None:
+        engineer = {"id": "93", "jobOpeningName": "Senior Data Engineer (Macedonia)", "locationType": "2"}
+        broken = {"id": "200", "jobOpeningName": "Business Analyst", "locationType": "1"}
+        routes = {
+            "https://iwconnect.bamboohr.com/careers/list": FakeJsonResponse({"result": [engineer, BAMBOOHR_REMOTE_LIST_ITEM, broken]}),
+            "https://iwconnect.bamboohr.com/careers/163/detail": FakeJsonResponse({"result": {"jobOpening": BAMBOOHR_REMOTE_OPENING}}),
+        }
+        context = FakeContext(routes)
+        collector = CompanyCareersCollector({"career_boards": [IWCONNECT]}, NO_DELAY)
+        result = asyncio.run(collector.collect(context, [BUSINESS_ANALYST], limit=10))
+
+        self.assertEqual([record.title for record in result.records], ["B2B Technical Business Analyst*"])
+        self.assertEqual(result.records[0].search_query, "Business Analyst")
+        self.assertNotIn("https://iwconnect.bamboohr.com/careers/93/detail", context.request.urls)
+        # A failed detail costs that one posting, not the rest of the board.
+        self.assertEqual(result.errors, 1)
+        self.assertIn("job 200", result.error_messages[0])
 
     def test_board_limit_has_safe_default(self) -> None:
         self.assertEqual(max_jobs_per_board({}), 10)

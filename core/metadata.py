@@ -36,7 +36,14 @@ def query_matches(query: str, title: str) -> bool:
     return bool(words) and all(re.search(rf"\b{re.escape(word)}\b", normalized_title) for word in words)
 
 
-_YEARS_PATTERN = re.compile(r"(\d{1,2})\s*(?:[-–—]|to)\s*(\d{1,2})\s*years?|(\d{1,2})\+?\s*years?")
+# More years than this is not an experience requirement: it is a calendar year
+# ("founded in 2017"), a company's age or a combined headcount figure ("150+
+# years of combined experience"). Shared with core/analyzer.py.
+MAX_EXPERIENCE_YEARS = 30
+
+# (?<!\d): with a bare \d{1,2} the regex also matched the tail of a longer
+# number, so "150+ years of combined experience" read as 50 years.
+_YEARS_PATTERN = re.compile(r"(?<!\d)(\d+)\s*(?:[-–—]|to)\s*(\d+)\s*years?|(?<!\d)(\d+)\+?\s*years?")
 # A bare "N years" also matches unrelated mentions like "founded 50 years ago" —
 # only count it as an experience requirement when a context word sits nearby.
 _YEARS_CONTEXT_WORDS = ("experience", "expérience", "expertise", "background", "track record")
@@ -56,7 +63,7 @@ def _max_years_mentioned(text: str) -> int:
             continue
         range_low, _range_high, single = match.groups()
         floor = int(range_low) if range_low else (int(single) if single else None)
-        if floor is not None:
+        if floor is not None and floor <= MAX_EXPERIENCE_YEARS:
             best = max(best, floor)
     return best
 

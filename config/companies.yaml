@@ -145,3 +145,10 @@ career_boards:
   - company: "Zerion"
     ats: "lever"
     slug: "zerion"
+  # BambooHR (careers/list + careers/<id>/detail JSON), added 2026-10-05.
+  # IT services company with offices in North Macedonia and Serbia; on the
+  # day it was added 19 jobs were listed, mostly engineering, and the B2B
+  # contractor roles were marked Remote.
+  - company: "IWConnect"
+    ats: "bamboohr"
+    slug: "iwconnect"

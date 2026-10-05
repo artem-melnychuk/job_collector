@@ -32,7 +32,7 @@ SEARCH -> COLLECT -> DEDUPLICATE -> SAVE RAW -> MERGE INTO DATASET
 
 | Source | How | Notes |
 |---|---|---|
-| Company career boards | Greenhouse and Lever public APIs | Boards are listed in `config/companies.yaml` |
+| Company career boards | Greenhouse, Lever and BambooHR public JSON endpoints | Boards are listed in `config/companies.yaml` |
 | Djinni | RSS | Ukrainian IT board; items outside the requested category are dropped, so a silently ignored filter shows up as an error instead of noise |
 | DOU.ua | RSS | Ukrainian IT community board; company, salary and remote/office are parsed from the structured feed title |
 | Jobicy | JSON API | Server-side eligibility filter (`geo`), titles matched locally |

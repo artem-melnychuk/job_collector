@@ -24,10 +24,9 @@ from playwright.async_api import async_playwright
 from collectors.linkedin import LinkedInCollector, detect_availability_status as detect_linkedin_availability
 from collectors.company_careers import (
     CompanyCareersCollector,
-    build_greenhouse_url,
-    build_lever_url,
-    parse_greenhouse_jobs,
-    parse_lever_jobs,
+    build_board_url,
+    configured_career_boards,
+    parse_board_jobs,
 )
 from collectors.wttj import (
     WttjCollector,
@@ -526,7 +525,7 @@ def detect_generic_availability(http_status: int | None, body_text: str) -> str:
 
 def parse_ats_board(note: str) -> tuple[str, str] | None:
     """Extract ATS and board slug from a Company Careers record note."""
-    match = re.search(r"ATS:\s*(Greenhouse|Lever);\s*board:\s*([^;]+)", note or "", re.IGNORECASE)
+    match = re.search(r"ATS:\s*(Greenhouse|Lever|BambooHR);\s*board:\s*([^;]+)", note or "", re.IGNORECASE)
     if not match:
         return None
     return match.group(1).casefold(), match.group(2).strip()
@@ -542,11 +541,16 @@ def ats_job_is_present(record_url: str, ats: str, jobs: list[dict[str, Any]]) ->
     saved_normalized = normalized_url(record_url)
     greenhouse_id_match = re.search(r"gh_jid=(\d+)", record_url)
     saved_id = greenhouse_id_match.group(1) if greenhouse_id_match else ""
+    # BambooHR's list carries no URL, only the id in /careers/<id>.
+    bamboohr_id_match = re.search(r"/careers/(\d+)", record_url)
+    saved_bamboohr_id = bamboohr_id_match.group(1) if bamboohr_id_match else ""
     for job in jobs:
         candidates = [str(job.get("absolute_url", "")), str(job.get("hostedUrl", ""))]
         if any(candidate and normalized_url(candidate) == saved_normalized for candidate in candidates):
             return True
         if ats == "greenhouse" and saved_id and str(job.get("id", "")) == saved_id:
+            return True
+        if ats == "bamboohr" and saved_bamboohr_id and str(job.get("id", "")) == saved_bamboohr_id:
             return True
     return False
 
@@ -576,6 +580,12 @@ async def run_availability_check(args: argparse.Namespace) -> int:
     counts = {"active": 0, "closed": 0, "unknown": 0}
     errors = 0
     career_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    # The record note keeps only ATS and slug; the configured board also
+    # knows a non-default Lever host (Kaiko and CoinsPaid are EU-hosted, and
+    # the default host answers 404 for them).
+    configured_boards = {
+        (board["ats"], board["slug"]): board for board in configured_career_boards(configuration["companies"])
+    }
     himalayas_cache: dict[str, set[str]] = {}
 
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -602,17 +612,13 @@ async def run_availability_check(args: argparse.Namespace) -> int:
                             ats, slug = board
                             cache_key = (ats, slug)
                             if cache_key not in career_cache:
-                                api_url = build_greenhouse_url(slug) if ats == "greenhouse" else build_lever_url(slug)
+                                api_url = build_board_url(configured_boards.get(cache_key, {"ats": ats, "slug": slug}))
                                 ats_response = await get_with_retry(
                                     context, api_url, timeout_ms=timeout_ms, retry_attempts=retry_attempts,
                                     delay_min_seconds=delay_min, delay_max_seconds=delay_max,
                                 )
                                 payload = await ats_response.json()
-                                career_cache[cache_key] = (
-                                    parse_greenhouse_jobs(payload)
-                                    if ats == "greenhouse"
-                                    else parse_lever_jobs(payload)
-                                )
+                                career_cache[cache_key] = parse_board_jobs(ats, payload)
                             status = "active" if ats_job_is_present(record.url, ats, career_cache[cache_key]) else "closed"
                     elif record.source == "Himalayas":
                         # Job pages are behind a Cloudflare challenge; ask the

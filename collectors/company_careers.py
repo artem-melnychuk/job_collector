@@ -1,7 +1,8 @@
-"""Collectors for public Greenhouse and Lever company career boards."""
+"""Collectors for public Greenhouse, Lever and BambooHR company career boards."""
 
 from __future__ import annotations
 
+import asyncio
 import html
 import re
 from datetime import datetime, timezone
@@ -18,6 +19,13 @@ from core.models import JobRecord
 GREENHOUSE_API = "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
 LEVER_API = "{host}/v0/postings/{slug}?mode=json"
 DEFAULT_LEVER_HOST = "https://api.lever.co"
+# BambooHR's own careers page (https://{slug}.bamboohr.com/careers) is a
+# single-page app over these two public JSON endpoints: the list has titles,
+# ids and locations but no description, the detail has the full posting.
+BAMBOOHR_LIST = "https://{slug}.bamboohr.com/careers/list"
+BAMBOOHR_DETAIL = "https://{slug}.bamboohr.com/careers/{job_id}/detail"
+BAMBOOHR_JOB_PAGE = "https://{slug}.bamboohr.com/careers/{job_id}"
+SUPPORTED_ATS = {"greenhouse", "lever", "bamboohr"}
 
 
 def clean_text(value: Any) -> str:
@@ -38,6 +46,23 @@ def build_lever_url(slug: str, host: str = DEFAULT_LEVER_HOST) -> str:
     return LEVER_API.format(host=host.strip().rstrip("/"), slug=slug.strip())
 
 
+def build_bamboohr_url(slug: str) -> str:
+    return BAMBOOHR_LIST.format(slug=slug.strip())
+
+
+def build_bamboohr_detail_url(slug: str, job_id: Any) -> str:
+    return BAMBOOHR_DETAIL.format(slug=slug.strip(), job_id=str(job_id).strip())
+
+
+def build_board_url(board: dict[str, str]) -> str:
+    """The public endpoint that lists a configured board's open jobs."""
+    if board["ats"] == "greenhouse":
+        return build_greenhouse_url(board["slug"])
+    if board["ats"] == "bamboohr":
+        return build_bamboohr_url(board["slug"])
+    return build_lever_url(board["slug"], board.get("host") or DEFAULT_LEVER_HOST)
+
+
 def _as_list(value: Any) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
@@ -48,6 +73,22 @@ def parse_greenhouse_jobs(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 def parse_lever_jobs(payload: Any) -> list[dict[str, Any]]:
     return _as_list(payload)
+
+
+def parse_bamboohr_jobs(payload: Any) -> list[dict[str, Any]]:
+    return _as_list(payload.get("result")) if isinstance(payload, dict) else []
+
+
+def parse_board_jobs(ats: str, payload: Any) -> list[dict[str, Any]]:
+    if ats == "greenhouse":
+        return parse_greenhouse_jobs(payload)
+    if ats == "bamboohr":
+        return parse_bamboohr_jobs(payload)
+    return parse_lever_jobs(payload)
+
+
+def board_job_title(job: dict[str, Any]) -> str:
+    return str(job.get("title") or job.get("text") or job.get("jobOpeningName") or "")
 
 
 def _location_text(value: Any) -> str:
@@ -79,7 +120,7 @@ def configured_career_boards(companies: dict[str, Any]) -> list[dict[str, str]]:
         ats = clean_text(board.get("ats")).casefold()
         slug = clean_text(board.get("slug"))
         host = clean_text(board.get("host")) or DEFAULT_LEVER_HOST
-        if company and ats in {"greenhouse", "lever"} and slug:
+        if company and ats in SUPPORTED_ATS and slug:
             result.append({"company": company, "ats": ats, "slug": slug, "host": host})
     return result
 
@@ -199,6 +240,64 @@ def _lever_record(job: dict[str, Any], board: dict[str, str], query: dict[str, s
     return record
 
 
+# Seen live 2026-10-05 on iwconnect.bamboohr.com: the careers page labels
+# locationType "1" as Remote and "2" as Hybrid. Other values were not
+# observed, so they fall back to reading the text rather than a guess.
+_BAMBOOHR_LOCATION_TYPES = {"1": "Remote", "2": "Hybrid"}
+
+
+def _bamboohr_location(opening: dict[str, Any]) -> tuple[str, str]:
+    """(city_region, country) from BambooHR's location / atsLocation blocks."""
+    location = opening.get("location") if isinstance(opening.get("location"), dict) else {}
+    ats_location = opening.get("atsLocation") if isinstance(opening.get("atsLocation"), dict) else {}
+    country = clean_text(location.get("addressCountry") or ats_location.get("country"))
+    parts = [
+        clean_text(location.get("city") or ats_location.get("city")),
+        clean_text(location.get("state") or ats_location.get("state")),
+        country,
+    ]
+    city_region = ", ".join(dict.fromkeys(part for part in parts if part))
+    return city_region, country or _country(city_region)
+
+
+def _bamboohr_record(
+    job: dict[str, Any], opening: dict[str, Any], board: dict[str, str], query: dict[str, str]
+) -> JobRecord:
+    """`job` is the list entry, `opening` the detail endpoint's jobOpening."""
+    merged = {**job, **{key: value for key, value in opening.items() if value not in (None, "", {})}}
+    city_region, country = _bamboohr_location(merged)
+    description = clean_text(merged.get("description"))
+    work_format = _BAMBOOHR_LOCATION_TYPES.get(str(merged.get("locationType") or "").strip()) or _work_format(
+        f"{city_region}\n{description}"
+    )
+    compensation = merged.get("compensation")
+    url = clean_text(merged.get("jobOpeningShareUrl")) or BAMBOOHR_JOB_PAGE.format(
+        slug=board["slug"], job_id=clean_text(job.get("id"))
+    )
+    record = JobRecord(
+        source="Company Careers",
+        date_collected=datetime.now().astimezone().isoformat(timespec="seconds"),
+        date_published=clean_text(merged.get("datePosted")),
+        title=clean_text(merged.get("jobOpeningName")),
+        company=board["company"],
+        city_region=city_region,
+        country=country,
+        work_format=work_format,
+        source_work_format=work_format,
+        contract_type=clean_text(merged.get("employmentStatusLabel")),
+        salary=clean_text(compensation) if isinstance(compensation, str) and compensation.strip() else extract_salary({}, description),
+        url=url,
+        full_text=description,
+        status="collected",
+        availability_status="active",
+        note=f"ATS: BambooHR; board: {board['slug']}",
+        search_query=query["query"],
+        job_category=query["category"],
+    )
+    record.job_id = build_job_id(record)
+    return record
+
+
 class CompanyCareersCollector(BaseCollector):
     """Collect matching jobs from explicitly configured public ATS boards."""
 
@@ -222,27 +321,43 @@ class CompanyCareersCollector(BaseCollector):
         for board in boards:
             if len(result.records) >= limit:
                 break
-            url = (
-                build_greenhouse_url(board["slug"])
-                if board["ats"] == "greenhouse"
-                else build_lever_url(board["slug"], board.get("host", DEFAULT_LEVER_HOST))
-            )
+            url = build_board_url(board)
             try:
                 response = await get_with_retry(
                     context, url, timeout_ms=timeout_ms, retry_attempts=retry_attempts,
                     delay_min_seconds=delay_min, delay_max_seconds=delay_max,
                 )
                 payload = await response.json()
-                jobs = parse_greenhouse_jobs(payload) if board["ats"] == "greenhouse" else parse_lever_jobs(payload)
+                jobs = parse_board_jobs(board["ats"], payload)
                 board_records = 0
                 for job in jobs:
                     if board_records >= board_limit:
                         break
-                    job_title = str(job.get("title") or job.get("text") or "")
-                    query = next((item for item in queries if query_matches(item["query"], job_title)), None)
+                    query = next((item for item in queries if query_matches(item["query"], board_job_title(job))), None)
                     if query is None:
                         continue
-                    record = _greenhouse_record(job, board, query) if board["ats"] == "greenhouse" else _lever_record(job, board, query)
+                    if board["ats"] == "greenhouse":
+                        record = _greenhouse_record(job, board, query)
+                    elif board["ats"] == "lever":
+                        record = _lever_record(job, board, query)
+                    else:
+                        # The list has no description: fetch the detail only
+                        # for titles that already matched a query.
+                        await asyncio.sleep(delay_ms / 1000)
+                        try:
+                            detail = await get_with_retry(
+                                context, build_bamboohr_detail_url(board["slug"], job.get("id")),
+                                timeout_ms=timeout_ms, retry_attempts=retry_attempts,
+                                delay_min_seconds=delay_min, delay_max_seconds=delay_max,
+                            )
+                            detail_payload = await detail.json()
+                        except Exception as error:
+                            result.errors += 1
+                            result.error_messages.append(f"{board['company']} (bamboohr) job {job.get('id')}: {error}")
+                            continue
+                        result_block = detail_payload.get("result") if isinstance(detail_payload, dict) else None
+                        opening = result_block.get("jobOpening") if isinstance(result_block, dict) else None
+                        record = _bamboohr_record(job, opening if isinstance(opening, dict) else {}, board, query)
                     if record.url and record.url not in seen_urls:
                         seen_urls.add(record.url)
                         result.records.append(record)
