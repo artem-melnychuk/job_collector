@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from playwright.async_api import async_playwright
@@ -158,4 +159,5 @@ class RecordFromPageIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.work_format, "Hybrid")
         self.assertEqual(record.salary, "80 000 - 95 000 EUR per year")
         self.assertIn("We need a Risk Analyst with strong SQL skills.", record.full_text)
-        self.assertEqual(record.date_published, "2 days ago")
+        # "2 days ago" on the page, stored as the date it stands for.
+        self.assertEqual(record.date_published, (datetime.now() - timedelta(days=2)).date().isoformat())

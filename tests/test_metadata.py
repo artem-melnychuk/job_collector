@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import unittest
 
+from datetime import date, datetime
+
 from core.metadata import (
+    parse_date,
+    resolve_relative_date,
     extract_location_from_text,
     extract_salary,
     has_disallowed_work_format,
@@ -301,8 +305,30 @@ class MetadataTests(unittest.TestCase):
 
     def test_normalize_salary_usd_converts_known_currencies(self) -> None:
         self.assertEqual(normalize_salary_usd("80000-95000 EUR/year"), "≈86,400-102,600 USD")
-        self.assertEqual(normalize_salary_usd("30 000 – 40 000 грн"), "≈700-1,000 USD")
+        self.assertEqual(normalize_salary_usd("30 000 – 40 000 грн"), "≈720-960 USD")
         self.assertEqual(normalize_salary_usd("£50,000/year"), "≈63,500 USD")
+
+    def test_normalize_salary_usd_reads_european_decimal_comma(self) -> None:
+        # Regression (2026-10-05): agap2 Italia's "30.000,00 €" stored as
+        # "≈3,240,000 USD" because every separator was stripped as thousands.
+        self.assertEqual(normalize_salary_usd("30.000,00 €"), "≈32,400 USD")
+        self.assertEqual(normalize_salary_usd("€11,50/hour"), "≈12 USD")
+        # Dot-thousands without decimals and US-style decimals still parse.
+        self.assertEqual(normalize_salary_usd("120.000 EUR"), "≈129,600 USD")
+        self.assertEqual(normalize_salary_usd("€5.000–€7.000"), "≈5,400-7,600 USD")
+        self.assertEqual(normalize_salary_usd("35.000€"), "≈37,800 USD")
+        self.assertEqual(normalize_salary_usd("45,000.00 EUR"), "≈48,600 USD")
+
+    def test_normalize_salary_usd_keeps_small_amounts_meaningful(self) -> None:
+        # Regression (2026-10-05): rounding to hundreds stored "30 EUR/month"
+        # as "≈0 USD" and "500€" as "≈500 USD".
+        self.assertEqual(normalize_salary_usd("30 EUR/month"), "≈32 USD")
+        self.assertEqual(normalize_salary_usd("80 EUR"), "≈86 USD")
+        self.assertEqual(normalize_salary_usd("25 GBP"), "≈32 USD")
+        self.assertEqual(normalize_salary_usd("500€"), "≈540 USD")
+        self.assertEqual(normalize_salary_usd("EUR 600/month"), "≈650 USD")
+        # Both ends of a range share the smaller bound's rounding step.
+        self.assertEqual(normalize_salary_usd("40 000 до 45 000 грн."), "≈960-1,080 USD")
 
     def test_normalize_salary_usd_skips_already_usd_or_unrecognized(self) -> None:
         self.assertEqual(normalize_salary_usd("$80,000 - $95,000"), "")
@@ -320,6 +346,32 @@ class MetadataTests(unittest.TestCase):
 
     def test_split_city_region_handles_empty_value(self) -> None:
         self.assertEqual(split_city_region("", "France"), ("", ""))
+
+
+
+class PublishDateTests(unittest.TestCase):
+    def test_relative_linkedin_age_is_pinned_to_a_date(self) -> None:
+        now = datetime(2026, 10, 5, 12, 0)
+        self.assertEqual(resolve_relative_date("2 days ago", now), "2026-10-03")
+        self.assertEqual(resolve_relative_date("1 week ago", now), "2026-09-28")
+        # An hour before 00:30 is the previous day.
+        self.assertEqual(resolve_relative_date("1 hour ago", datetime(2026, 10, 5, 0, 30)), "2026-10-04")
+        self.assertEqual(resolve_relative_date("Reposted 11 minutes ago", now), "Reposted 2026-10-05")
+
+    def test_text_without_an_age_is_left_alone(self) -> None:
+        now = datetime(2026, 10, 5)
+        self.assertEqual(resolve_relative_date("2026-08-01T10:00:00Z", now), "2026-08-01T10:00:00Z")
+        self.assertEqual(resolve_relative_date("", now), "")
+
+    def test_parse_date_reads_every_source_format(self) -> None:
+        self.assertEqual(parse_date("2026-09-19T04:02:55+00:00"), date(2026, 9, 19))
+        self.assertEqual(parse_date("Fri, 02 Oct 2026 15:31:05"), date(2026, 10, 2))
+        self.assertEqual(parse_date("Reposted 2026-10-03"), date(2026, 10, 3))
+        self.assertEqual(parse_date("2026-10-05 00:00:00"), date(2026, 10, 5))
+
+    def test_parse_date_gives_none_for_unknown_text(self) -> None:
+        for value in ("", None, "3 days ago", "soon", "2026-13-45"):
+            self.assertIsNone(parse_date(value), value)
 
 
 if __name__ == "__main__":

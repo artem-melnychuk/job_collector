@@ -13,6 +13,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 from core.cross_dedup import inherit_group_decisions
 from core.ids import build_deduplication_key, build_job_id
+from core.metadata import parse_date
 from core.models import JOB_RECORD_COLUMNS, JobRecord
 
 
@@ -182,6 +183,13 @@ def _style_manual_review_sheet(worksheet) -> None:
         for row_index in range(2, worksheet.max_row + 1):
             worksheet.cell(row_index, column_index).fill = yellow
 
+    # `applied` holds "Да" or the date typed with Ctrl+; in Excel. pandas
+    # writes that date back with a time part ("2026-10-05 00:00:00") on every
+    # rebuild, so show it as a plain date. Text cells ("Да") are unaffected.
+    applied_column = MANUAL_REVIEW_COLUMNS.index("applied") + 1
+    for row_index in range(2, worksheet.max_row + 1):
+        worksheet.cell(row_index, applied_column).number_format = "YYYY-MM-DD"
+
     validations = {
         "decision": '"Подходит,Возможно,Не подходит"',
         "applied": '"Да"',
@@ -294,8 +302,12 @@ def load_records(input_path: Path) -> list[JobRecord]:
     if not input_path.exists():
         return []
 
+    # Every JobRecord field is text, so read every column as text. Without
+    # dtype=str a whole-number column with a blank (years_experience_min) is
+    # read as float64 and "3" comes back as "3.0". Blank cells stay NaN and
+    # JobRecord.from_mapping turns them into "".
     if input_path.suffix.casefold() == ".csv":
-        dataframe = pd.read_csv(input_path)
+        dataframe = pd.read_csv(input_path, dtype=str)
     else:
         with pd.ExcelFile(input_path) as workbook:
             if "jobs_master" in workbook.sheet_names:
@@ -304,7 +316,7 @@ def load_records(input_path: Path) -> list[JobRecord]:
                 sheet_name = "Jobs"
             else:
                 sheet_name = "raw_jobs"
-            dataframe = pd.read_excel(workbook, sheet_name=sheet_name)
+            dataframe = pd.read_excel(workbook, sheet_name=sheet_name, dtype=str)
 
     return [JobRecord.from_mapping(row.to_dict()) for _, row in dataframe.iterrows()]
 
@@ -350,7 +362,24 @@ def _reconcile_updated(previous: JobRecord, incoming: JobRecord) -> JobRecord:
     }
     if incoming.availability_status in {"", "active"} and previous.availability_status not in {"", "active", "unknown"}:
         updates["availability_status"] = previous.availability_status
+    # date_collected is when the posting was first seen: moving it forward on
+    # every re-collect would hide how long it sat before being applied to.
+    if previous.date_collected and (not incoming.date_collected or previous.date_collected < incoming.date_collected):
+        updates["date_collected"] = previous.date_collected
+    earliest_published = _earlier_date_text(previous.date_published, incoming.date_published)
+    if earliest_published != incoming.date_published:
+        updates["date_published"] = earliest_published
     return replace(incoming, **updates) if updates else incoming
+
+
+def _earlier_date_text(previous: str, incoming: str) -> str:
+    """The earlier of two source date strings. Djinni and LinkedIn move a
+    posting's date forward when it is bumped or reposted; the first
+    publication is the one kept. Unparseable text falls back to incoming."""
+    if not incoming or not previous:
+        return incoming or previous
+    before, after = parse_date(previous), parse_date(incoming)
+    return previous if before and after and before < after else incoming
 
 
 def merge_records(

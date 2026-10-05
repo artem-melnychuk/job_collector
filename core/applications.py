@@ -18,6 +18,7 @@ from pathlib import Path
 
 from core.cv_review import extract_verdict, has_review
 from core.ids import normalize_url
+from core.metadata import parse_date
 from core.models import JobRecord
 
 # What the user reads first comes first; job_id is internal and goes last.
@@ -25,7 +26,11 @@ APPLICATIONS_COLUMNS = (
     "company",
     "title",
     "status",
+    "response",
     "date_sent",
+    "days_from_published",
+    "days_from_found",
+    "date_published",
     "notes",
     "url",
     "review_verdict",
@@ -37,10 +42,14 @@ APPLICATIONS_COLUMNS = (
 # Preserved across reruns, same convention as manual_review's
 # MANUAL_INPUT_COLUMNS - a human fills these in, a rerun must never
 # overwrite them with a freshly-derived value.
-APPLICATIONS_INPUT_COLUMNS = ("status", "date_sent", "notes")
+APPLICATIONS_INPUT_COLUMNS = ("status", "response", "date_sent", "notes")
 
 DEFAULT_STATUS = "draft"
 STATUS_OPTIONS = ("draft", "approved", "rejected", "sent")
+# What the employer did with a sent application; blank = still waiting.
+# Next to days_from_published / days_from_found it shows whether applying
+# sooner gets more replies.
+RESPONSE_OPTIONS = ("нет ответа", "отказ", "интервью", "оффер")
 
 
 @dataclass
@@ -77,6 +86,20 @@ def _date_str(value: object) -> str:
     if hasattr(value, "date") and callable(value.date):
         return value.date().isoformat()
     return str(value).strip().removesuffix(" 00:00:00")
+
+
+def _timing(record: JobRecord | None, date_sent: str) -> dict[str, object]:
+    """How quickly a posting was applied to: days from its publication, and
+    from the day the collector first found it (`date_collected`), to
+    `date_sent`. Blank when either date is unknown."""
+    published = parse_date(record.date_published) if record else None
+    found = parse_date(record.date_collected) if record else None
+    sent = parse_date(date_sent)
+    return {
+        "date_published": published.isoformat() if published else "",
+        "days_from_published": (sent - published).days if sent and published else "",
+        "days_from_found": (sent - found).days if sent and found else "",
+    }
 
 
 def _resolve_manual_keys(
@@ -129,8 +152,10 @@ def build_applications_rows(
                 "pdf_ready": "Да" if draft.pdf_ready else "Нет",
                 "status": previous.get("status") or DEFAULT_STATUS,
                 "date_sent": _date_str(previous.get("date_sent")),
+                "response": str(previous.get("response") or ""),
                 "notes": previous.get("notes", ""),
                 "date_added": _date_str(previous.get("date_added")) or today_str,
+                **_timing(record, _date_str(previous.get("date_sent"))),
             }
         )
 
@@ -152,17 +177,32 @@ def build_applications_rows(
                 "pdf_ready": "",
                 "status": status,
                 "date_sent": _date_str(previous.get("date_sent")),
+                "response": str(previous.get("response") or ""),
                 "notes": str(previous.get("notes") or ""),
                 "date_added": _date_str(previous.get("date_added")) or today_str,
+                **_timing(record, _date_str(previous.get("date_sent"))),
             }
         )
     return rows
 
 
 def _mark_date(value: object, today_str: str) -> str:
-    """The date an `applied` mark stands for: a typed date, otherwise today."""
+    """The date an `applied` mark stands for: a typed date, otherwise today.
+
+    Excel with US regional settings leaves "05.10.2026" as text rather than
+    a date, so the day-first dotted form is read here too.
+    """
     text = _date_str(value)
-    return text if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else today_str
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
+    dotted = re.fullmatch(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", text)
+    if dotted:
+        day, month, year = (int(part) for part in dotted.groups())
+        try:
+            return date(year, month, day).isoformat()
+        except ValueError:
+            pass
+    return today_str
 
 
 def apply_applied_marks(

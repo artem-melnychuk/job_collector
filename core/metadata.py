@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 
@@ -291,12 +293,19 @@ _SALARY_AMOUNT_PATTERN = re.compile(r"\d[\d.,\s]*\d|\d")
 
 
 def _parse_salary_amount(token: str) -> float | None:
-    # Strip thousands separators (space/dot/comma between digits) - the same
-    # convention extract_salary's own amount patterns already assume for this
-    # domain (plain integer salaries, no meaningful cents).
-    digits = re.sub(r"(?<=\d)[ ,.](?=\d)", "", token)
+    # Space, dot and comma can all be thousands separators, and dot or comma
+    # the decimal one: European "30.000,00" and US "30,000.00" both occur.
+    # Same rule as extract_salary: a last separator followed by 1-2 digits is
+    # decimal, one followed by exactly 3 is thousands. Stripping every
+    # separator (until 2026-10-05) read "30.000,00 €" as 3,000,000 EUR.
+    compact = re.sub(r"\s", "", token)
+    decimals = ""
+    decimal_match = re.search(r"[.,](\d{1,2})$", compact)
+    if decimal_match:
+        compact, decimals = compact[: decimal_match.start()], decimal_match.group(1)
+    digits = re.sub(r"[.,]", "", compact)
     try:
-        return float(digits)
+        return float(f"{digits}.{decimals}" if decimals else digits)
     except ValueError:
         return None
 
@@ -322,7 +331,14 @@ def normalize_salary_usd(salary_text: str) -> str:
     amounts = [a for a in amounts if a is not None]
     if not amounts:
         return ""
-    converted = [round(a * rate / 100) * 100 for a in amounts]
+    # At least two significant figures: hundreds from 1,000 up, tens from
+    # 100, whole units below. Rounding everything to hundreds turned
+    # "30 EUR/month" into "≈0 USD". A range uses its smallest bound's step
+    # for both ends ("960-1,080", not "960-1,100").
+    usd = [a * rate for a in amounts]
+    smallest = min(usd)
+    step = 100 if smallest >= 1000 else 10 if smallest >= 100 else 1
+    converted = [round(a / step) * step for a in usd]
     if len(converted) >= 2:
         low, high = min(converted), max(converted)
         value = f"{low:,.0f}-{high:,.0f}" if low != high else f"{low:,.0f}"
@@ -412,3 +428,48 @@ def extract_location_from_text(text: str) -> str:
     """
     match = _LOCATION_LINE_PATTERN.search(str(text or ""))
     return match.group(1).strip() if match else ""
+
+
+_RELATIVE_AGE_PATTERN = re.compile(r"(\d+)\s+(second|minute|hour|day|week|month)s?\s+ago", re.IGNORECASE)
+_AGE_UNITS = {
+    "second": timedelta(seconds=1),
+    "minute": timedelta(minutes=1),
+    "hour": timedelta(hours=1),
+    "day": timedelta(days=1),
+    "week": timedelta(weeks=1),
+    "month": timedelta(days=30),
+}
+
+
+def resolve_relative_date(text: str, reference: datetime) -> str:
+    """Turn LinkedIn's "3 days ago" into an ISO date counted back from `reference`.
+
+    The relative text only means something next to the moment it was read,
+    so it is resolved at collect time. A prefix such as "Reposted" is kept
+    ("Reposted 2026-10-03"); text without an age is returned unchanged.
+    """
+    text = str(text or "")
+    match = _RELATIVE_AGE_PATTERN.search(text)
+    if not match:
+        return text
+    resolved = reference - int(match.group(1)) * _AGE_UNITS[match.group(2).lower()]
+    return f"{text[:match.start()]}{resolved.date().isoformat()}{text[match.end():]}".strip()
+
+
+def parse_date(value: object) -> date | None:
+    """Calendar date out of the date strings sources give: ISO 8601
+    ("2026-09-19T04:02:55+00:00", also inside "Reposted 2026-10-03") or an
+    RSS pubDate ("Fri, 02 Oct 2026 15:31:05"). Anything else is None."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = re.search(r"\d{4}-\d{2}-\d{2}", text)
+    if match:
+        try:
+            return date.fromisoformat(match.group(0))
+        except ValueError:
+            return None
+    try:
+        return parsedate_to_datetime(text).date()
+    except (TypeError, ValueError, IndexError):
+        return None

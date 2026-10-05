@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import html
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from bs4 import BeautifulSoup
 from playwright.async_api import BrowserContext
@@ -100,7 +100,9 @@ def _greenhouse_record(job: dict[str, Any], board: dict[str, str], query: dict[s
     record = JobRecord(
         source="Company Careers",
         date_collected=datetime.now().astimezone().isoformat(timespec="seconds"),
-        date_published=clean_text(job.get("updated_at")),
+        # `updated_at` moves on every edit of the posting; `first_published`
+        # is when it went live. Older payloads may lack it.
+        date_published=clean_text(job.get("first_published") or job.get("updated_at")),
         title=clean_text(job.get("title")),
         company=board["company"],
         city_region=location,
@@ -155,6 +157,14 @@ def _lever_work_format(job: dict[str, Any], text: str) -> str:
     return mapped or _work_format(text)
 
 
+def _lever_created_at(job: dict[str, Any]) -> str:
+    """Lever gives `createdAt` as epoch milliseconds."""
+    created = job.get("createdAt")
+    if not isinstance(created, (int, float)) or isinstance(created, bool):
+        return ""
+    return datetime.fromtimestamp(created / 1000, tz=timezone.utc).isoformat(timespec="seconds")
+
+
 def _lever_record(job: dict[str, Any], board: dict[str, str], query: dict[str, str]) -> JobRecord:
     categories = job.get("categories") if isinstance(job.get("categories"), dict) else {}
     location = _location_text(categories.get("location"))
@@ -168,6 +178,7 @@ def _lever_record(job: dict[str, Any], board: dict[str, str], query: dict[str, s
     record = JobRecord(
         source="Company Careers",
         date_collected=datetime.now().astimezone().isoformat(timespec="seconds"),
+        date_published=_lever_created_at(job),
         title=clean_text(job.get("text")),
         company=board["company"],
         city_region=location,

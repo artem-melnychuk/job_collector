@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 from scripts.applications_tracker import load_existing_applications, write_applications_sheet
 
@@ -34,11 +35,16 @@ class ApplicationsSheetRoundTripTests(unittest.TestCase):
             self.assertIn("status", headers)
             status_col = headers.index("status") + 1
             sheet.cell(2, status_col).value = "approved"
+            response_col = headers.index("response") + 1
+            sheet.cell(2, response_col).value = "интервью"
+            dropdowns = {str(dv.sqref).split(":")[0]: dv.formula1 for dv in sheet.data_validations.dataValidation}
+            self.assertEqual(dropdowns[f"{get_column_letter(response_col)}2"], '"нет ответа,отказ,интервью,оффер"')
             workbook.save(path)
             workbook.close()
 
             existing = load_existing_applications(path)
             self.assertEqual(existing["job_a"]["status"], "approved")
+            self.assertEqual(existing["job_a"]["response"], "интервью")
         finally:
             path.unlink(missing_ok=True)
 

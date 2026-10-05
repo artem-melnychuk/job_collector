@@ -13,7 +13,13 @@ from bs4 import BeautifulSoup
 from playwright.async_api import BrowserContext, Page, TimeoutError as PlaywrightTimeoutError
 
 from collectors.base import BaseCollector, CollectorResult, per_query_share, setting
-from core.metadata import extract_location_from_text, extract_salary, infer_country, infer_work_format
+from core.metadata import (
+    extract_location_from_text,
+    extract_salary,
+    infer_country,
+    infer_work_format,
+    resolve_relative_date,
+)
 from core.ids import build_job_id
 from core.models import JobRecord
 
@@ -248,7 +254,10 @@ async def record_from_page(
             page,
             ['[id^="JobDetails_AboutTheJob_"]', ".jobs-description-content__text", ".show-more-less-html__markup"],
         )
-        date_published = await first_text(page, ["time", ".posted-time-ago__text"])
+        # The page shows "2 days ago"; pin it to a date now, while "now" is known.
+        date_published = resolve_relative_date(
+            await first_text(page, ["time", ".posted-time-ago__text"]), datetime.now()
+        )
         contract_type = ""
         # infer_visible_metadata() is NOT used here: it assumes the old "main"
         # fallback's shape (company / title / location · date as the first few

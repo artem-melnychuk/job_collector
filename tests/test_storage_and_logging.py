@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -81,6 +82,29 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(workbook["jobs_master"].sheet_state, "hidden")
             self.assertEqual(workbook.active.title, "manual_review")
             workbook.close()
+        finally:
+            path.unlink(missing_ok=True)
+            path.with_suffix(".csv").unlink(missing_ok=True)
+
+    def test_whole_numbers_in_a_column_with_blanks_survive_a_load_and_save(self) -> None:
+        # Regression: pandas read a whole-number column with a blank as
+        # float64, so "3" came back as "3.0". Every script that saves without
+        # re-analyzing stored "3.0" and analyzer.py stored "3" again, flipping
+        # 224 cells on alternating saves with no value actually changing.
+        path = Path("data/raw/_test_storage_whole_numbers.xlsx")
+        try:
+            records = [
+                make_record(years_experience_min="3", years_experience_max="5"),
+                make_record(url="https://example.com/jobs/456"),
+            ]
+            save_records(records, path)
+            save_records(load_records(path), path)
+
+            for loaded in (load_records(path), load_records(path.with_suffix(".csv"))):
+                self.assertEqual(loaded[0].years_experience_min, "3")
+                self.assertEqual(loaded[0].years_experience_max, "5")
+                self.assertEqual(loaded[1].years_experience_min, "")
+                self.assertEqual(loaded[1].years_experience_max, "")
         finally:
             path.unlink(missing_ok=True)
             path.with_suffix(".csv").unlink(missing_ok=True)
@@ -211,6 +235,31 @@ class StorageTests(unittest.TestCase):
             path.unlink(missing_ok=True)
             path.with_suffix(".csv").unlink(missing_ok=True)
 
+    def test_applied_date_survives_a_rebuild_and_shows_without_time(self) -> None:
+        path = Path("data/raw/_test_manual_review_applied_date.xlsx")
+        try:
+            record = make_record(job_id="linkedin_applied_date_test")
+            save_records([record], path)
+
+            # What Ctrl+; in Excel leaves in the cell: a real date, not text.
+            workbook = load_workbook(path)
+            sheet = workbook["manual_review"]
+            applied_col = MANUAL_REVIEW_COLUMNS.index("applied") + 1
+            sheet.cell(2, applied_col).value = datetime(2026, 10, 5)
+            workbook.save(path)
+            workbook.close()
+
+            save_records([record], path)
+
+            reloaded = load_workbook(path)
+            cell = reloaded["manual_review"].cell(2, applied_col)
+            self.assertEqual(cell.value, datetime(2026, 10, 5))
+            self.assertEqual(cell.number_format, "YYYY-MM-DD")
+            reloaded.close()
+        finally:
+            path.unlink(missing_ok=True)
+            path.with_suffix(".csv").unlink(missing_ok=True)
+
     def test_manual_review_has_conditional_formatting_for_each_decision(self) -> None:
         path = Path("data/raw/_test_manual_review_colors.xlsx")
         try:
@@ -268,6 +317,28 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(remerged[0].role_family, "Data Analytics")
         self.assertEqual(remerged[0].skills_all, "SQL; Python")
         self.assertEqual(remerged[0].analysis_note, "Rule-based first pass; review before using for decisions.")
+
+    def test_recollecting_keeps_the_first_seen_date_and_a_known_publish_date(self) -> None:
+        first = make_record(date_collected="2026-10-01T10:00:00+02:00", date_published="2026-09-30")
+        merged, _ = merge_records([], [first])
+
+        later = make_record(date_collected="2026-10-04T10:00:00+02:00", date_published="")
+        remerged, counts = merge_records(merged, [later])
+
+        self.assertEqual(counts, {"new": 0, "existing": 1, "updated": 0})
+        self.assertEqual(remerged[0].date_collected, "2026-10-01T10:00:00+02:00")
+        self.assertEqual(remerged[0].date_published, "2026-09-30")
+
+    def test_a_bumped_posting_keeps_its_first_publish_date(self) -> None:
+        # Djinni re-raises a posting with a new RSS pubDate; Greenhouse used
+        # to give updated_at before first_published. The earlier date wins.
+        merged, _ = merge_records([], [make_record(date_published="Mon, 31 Aug 2026 10:00:00")])
+        bumped, counts = merge_records(merged, [make_record(date_published="Wed, 30 Sep 2026 10:00:00")])
+        self.assertEqual(bumped[0].date_published, "Mon, 31 Aug 2026 10:00:00")
+        self.assertEqual(counts["updated"], 0)
+
+        corrected, _ = merge_records(bumped, [make_record(date_published="2026-08-13T04:21:27-04:00")])
+        self.assertEqual(corrected[0].date_published, "2026-08-13T04:21:27-04:00")
 
     def test_recollecting_does_not_downgrade_a_checked_availability_status(self) -> None:
         checked_closed = make_record(availability_status="closed")

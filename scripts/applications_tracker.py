@@ -27,6 +27,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from core.applications import (
     APPLICATIONS_COLUMNS,
     APPLICATIONS_INPUT_COLUMNS,
+    RESPONSE_OPTIONS,
     STATUS_OPTIONS,
     apply_applied_marks,
     build_applications_rows,
@@ -110,6 +111,10 @@ def write_applications_sheet(path: Path, rows: list[dict[str, str]]) -> None:
         # (an application sent without a draft) gets the dropdown and colors.
         last_row = max(sheet.max_row, 2) + HAND_ENTRY_ROWS
         validation.add(f"{status_column_letter}2:{status_column_letter}{last_row}")
+        response_column_letter = sheet.cell(1, APPLICATIONS_COLUMNS.index("response") + 1).column_letter
+        response_validation = DataValidation(type="list", formula1=f'"{",".join(RESPONSE_OPTIONS)}"', allow_blank=True)
+        sheet.add_data_validation(response_validation)
+        response_validation.add(f"{response_column_letter}2:{response_column_letter}{last_row}")
 
         last_column_letter = sheet.cell(1, len(APPLICATIONS_COLUMNS)).column_letter
         data_range = f"A2:{last_column_letter}{last_row}"

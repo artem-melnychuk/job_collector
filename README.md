@@ -44,6 +44,31 @@ SEARCH -> COLLECT -> DEDUPLICATE -> SAVE RAW -> MERGE INTO DATASET
 | Work.ua, Robota.ua | Playwright | Implemented, but blocked by anti-bot protection; opt-in only |
 | Indeed | — | Checked, not addable: the RSS feed was removed (HTTP 404) and search sits behind a Cloudflare captcha (HTTP 403) |
 
+## What the data shows
+
+Snapshot of the private dataset on 2026-10-05: 237 postings collected between 2026-08-18 and 2026-10-05, 223 after collapsing postings with the same normalized company and title. Counts come from `scripts/certification_analysis.py`; a posting counts once per term. The sample follows one search profile (analyst roles, remote or in Europe, with a crypto and fintech lean), so the shares describe this sample, not the job market as a whole.
+
+| Tool | Postings | Share of 223 |
+|---|---:|---:|
+| SQL | 129 | 57.8% |
+| Python | 98 | 43.9% |
+| Power BI | 61 | 27.4% |
+| Tableau | 56 | 25.1% |
+| Excel | 54 | 24.2% |
+| Looker | 24 | 10.8% |
+| BigQuery | 17 | 7.6% |
+| dbt | 13 | 5.8% |
+| Snowflake | 11 | 4.9% |
+| GA4 / Google Analytics | 6 | 2.7% |
+
+- **SQL is the most common requirement:** 129 of 223 postings (57.8%). Python is second with 98 (43.9%).
+- **Power BI and Tableau appear at similar rates:** 61 postings (27.4%) and 56 (25.1%). Looker follows with 24 (10.8%).
+- **Cloud warehouse and modeling tools are uncommon:** BigQuery 17 (7.6%), dbt 13 (5.8%), Snowflake 11 (4.9%).
+- **Certificates are almost never asked for.** The script looks for nine certificate patterns (PL-300, Tableau, Google Data Analytics, Google Analytics / GA4, IBM, CompTIA Data+, GitHub Foundations, dbt, and the word "certification" within 60 characters of a tool name). One posting of 223 matched, and it lists certificates as preferred; none requires one.
+- **Remote is the largest group:** 120 of 223 postings have work format Remote. The other 103 are hybrid, on-site or do not state a format: 51 of them name a European country (Ukraine included), 52 name a place outside Europe or no country.
+
+Cross-check: `scripts/skills_gap_report.py` counts the same 223 postings with the analyzer's own skill patterns. It gives the same numbers for Power BI, Tableau, Looker, dbt and Snowflake, and 16 instead of 17 for BigQuery, because only the certification script's pattern accepts the spelling "Big Query".
+
 ## Quick start
 
 ```powershell

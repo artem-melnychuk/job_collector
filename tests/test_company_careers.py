@@ -99,6 +99,33 @@ class CompanyCareersTests(unittest.TestCase):
         record = _lever_record(job, {"company": "Example", "ats": "lever", "slug": "example"}, {"query": "Data Analyst", "category": "data"})
         self.assertEqual(record.work_format, "Remote")
         self.assertEqual(record.country, "France")
+        self.assertEqual(record.date_published, "")
+
+    def test_lever_record_reads_created_at_as_publish_date(self) -> None:
+        job = {
+            "text": "Data Analyst",
+            "categories": {"location": "Remote"},
+            "description": "Remote role.",
+            "hostedUrl": "https://jobs.lever.co/example/ghi",
+            "createdAt": 1759658400000,  # epoch ms, 2025-10-05T10:00:00Z
+        }
+        record = _lever_record(job, {"company": "Example", "ats": "lever", "slug": "example"}, {"query": "Data Analyst", "category": "data"})
+        self.assertEqual(record.date_published, "2025-10-05T10:00:00+00:00")
+
+    def test_greenhouse_publish_date_is_first_published_not_updated_at(self) -> None:
+        job = {
+            "absolute_url": "https://boards.greenhouse.io/example/jobs/1",
+            "location": {"name": "Remote"},
+            "first_published": "2026-08-13T04:21:27-04:00",
+            "updated_at": "2026-09-30T09:00:00-04:00",
+            "title": "Data Analyst",
+            "content": "<p>Remote role.</p>",
+        }
+        board = {"company": "Example", "ats": "greenhouse", "slug": "example"}
+        query = {"query": "Data Analyst", "category": "data"}
+        self.assertEqual(_greenhouse_record(job, board, query).date_published, "2026-08-13T04:21:27-04:00")
+        del job["first_published"]
+        self.assertEqual(_greenhouse_record(job, board, query).date_published, "2026-09-30T09:00:00-04:00")
 
     def test_greenhouse_record_maps_fields_from_a_real_shaped_payload(self) -> None:
         # Shaped after a real Coinbase boards-api response (fetched 2026-09-08):

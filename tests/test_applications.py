@@ -137,6 +137,37 @@ class BuildApplicationsRowsTests(unittest.TestCase):
 
 
 
+class ApplicationSpeedTests(unittest.TestCase):
+    def test_days_from_publication_and_from_first_sighting(self) -> None:
+        records = {
+            "job_a": JobRecord(
+                job_id="job_a",
+                date_published="Fri, 02 Oct 2026 15:31:05",
+                date_collected="2026-10-03T09:00:00+02:00",
+            )
+        }
+        existing = {"job_a": {"status": "sent", "date_sent": "2026-10-05"}}
+        row = build_applications_rows([], records, existing)[0]
+        self.assertEqual(row["date_published"], "2026-10-02")
+        self.assertEqual(row["days_from_published"], 3)
+        self.assertEqual(row["days_from_found"], 2)
+
+    def test_employer_response_is_preserved_across_reruns(self) -> None:
+        records = {"job_a": JobRecord(job_id="job_a")}
+        drafts = [DraftFile(job_id="job_a", review_verdict="approved", pdf_ready=True)]
+        existing = {"job_a": {"status": "sent", "date_sent": "2026-10-05", "response": "отказ"}}
+        drafted = build_applications_rows(drafts, records, existing)[0]
+        undrafted = build_applications_rows([], records, existing)[0]
+        self.assertEqual(drafted["response"], "отказ")
+        self.assertEqual(undrafted["response"], "отказ")
+
+    def test_unknown_dates_leave_the_speed_blank(self) -> None:
+        records = {"job_a": JobRecord(job_id="job_a", date_published="", date_collected="2026-10-03T09:00:00+02:00")}
+        existing = {"job_a": {"status": "rejected", "date_sent": ""}}
+        row = build_applications_rows([], records, existing)[0]
+        self.assertEqual((row["date_published"], row["days_from_published"], row["days_from_found"]), ("", "", ""))
+
+
 class ApplyAppliedMarksTests(unittest.TestCase):
     # The user marks "Да" (or a date) in manual_review / active_near_fit
     # after applying; the log is filled from those marks, never by hand.
@@ -148,6 +179,13 @@ class ApplyAppliedMarksTests(unittest.TestCase):
     def test_typed_date_is_used_as_date_sent(self) -> None:
         merged = apply_applied_marks({}, {"job_x": "2026-09-28"}, today=date(2026, 10, 1))
         self.assertEqual(merged["job_x"]["date_sent"], "2026-09-28")
+
+    def test_day_first_dotted_date_left_as_text_is_read(self) -> None:
+        # Excel with en-US regional settings keeps "05.10.2026" as text.
+        merged = apply_applied_marks({}, {"a": "05.10.2026", "b": "5.9.2026", "c": "31.02.2026"}, today=date(2026, 10, 7))
+        self.assertEqual(merged["a"]["date_sent"], "2026-10-05")
+        self.assertEqual(merged["b"]["date_sent"], "2026-09-05")
+        self.assertEqual(merged["c"]["date_sent"], "2026-10-07")  # not a real date: falls back to today
 
     def test_draft_becomes_sent_but_decided_rows_are_left_alone(self) -> None:
         existing = {
