@@ -26,7 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.skill_recommendations import normalize_key  # noqa: E402
-DATA_PATH = PROJECT_ROOT / "data" / "processed" / "crypto_jobs_clean_v1.xlsx"
+DATA_PATH = PROJECT_ROOT / "data" / "processed" / "jobs_clean_v1.xlsx"
 REPORTS_DIR = PROJECT_ROOT / "reports"
 MIN_POSTINGS = 50
 CONTEXT_WINDOW = 150

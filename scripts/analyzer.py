@@ -15,7 +15,7 @@ from core.storage import load_records, save_records
 
 
 def main() -> int:
-    path = PROJECT_ROOT / "data" / "processed" / "crypto_jobs_clean_v1.xlsx"
+    path = PROJECT_ROOT / "data" / "processed" / "jobs_clean_v1.xlsx"
     records = load_records(path)
     analyzed = [analyze_record(record) for record in records]
     # After per-record analysis: grouping compares records with each other.

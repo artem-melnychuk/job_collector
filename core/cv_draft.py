@@ -3,7 +3,7 @@
 Complements `core/fit_score.py` in the same "billed, explicitly-invoked
 script" family - not part of the free collect/analyze pass. Deliberately
 NOT a full formal cover letter: the candidate's own existing hand-written
-drafts (`CV/application_drafts_round*.md`) are short, dry, factual
+drafts (`CV/archive/application_drafts/2026-09-05_manual_rounds/`) are short, dry, factual
 first-person paragraphs naming concrete tools/employers and relocation
 stance, not a generic "Dear Hiring Manager" letter - this generates in
 that same established style, not a new one.

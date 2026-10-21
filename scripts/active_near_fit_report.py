@@ -220,7 +220,7 @@ def refresh_active_near_fit(workbook) -> list[dict[str, str]]:
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    path = PROJECT_ROOT / "data" / "processed" / "crypto_jobs_clean_v1.xlsx"
+    path = PROJECT_ROOT / "data" / "processed" / "jobs_clean_v1.xlsx"
     workbook = openpyxl.load_workbook(path)
     rows = refresh_active_near_fit(workbook)
     workbook.save(path)

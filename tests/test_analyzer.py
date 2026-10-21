@@ -83,9 +83,91 @@ class AnalyzerTests(unittest.TestCase):
         record = self.make_record("Analytics Engineer, Data", "Founded in 2019 and fully distributed")
         self.assertEqual(classify_seniority(record), ("Unknown", "", ""))
 
-    def test_reads_french_and_italian_years(self) -> None:
+    def test_reads_french_italian_and_spanish_years(self) -> None:
         self.assertEqual(infer_experience_years("3 ans d'expérience minimum"), ("3", "3"))
         self.assertEqual(infer_experience_years("Almeno 4 anni di esperienza come business analyst"), ("4", "4"))
+        self.assertEqual(infer_experience_years("con al menos 5 años de experiencia en la unificación"), ("5", "5"))
+
+    def test_reads_ranges_with_any_dash(self) -> None:
+        # Regression: only "-" was a range separator, so "0–2 years" read as 2.
+        self.assertEqual(infer_experience_years("experience: 3–4 years  compensation"), ("3", "4"))
+        self.assertEqual(infer_experience_years("entry-level professional (0–2 years of experience)"), ("0", "2"))
+        self.assertEqual(infer_experience_years("1 to 3 years of experience in business analysis"), ("1", "3"))
+        self.assertEqual(infer_experience_years("досвід: від 1-2 років у сфері аналітики даних"), ("1", "2"))
+
+    def test_reads_or_more_years(self) -> None:
+        text = "engineering or a related field 3 or more years of experience in product analytics"
+        self.assertEqual(infer_experience_years(text), ("3", "3"))
+
+    def test_reads_decimal_years(self) -> None:
+        # Regression: "1.5 years" read as 5, which made the posting Senior.
+        self.assertEqual(infer_experience_years("1.5 years of experience with SQL"), ("1.5", "1.5"))
+        self.assertEqual(infer_experience_years("досвід від 1,5 року"), ("1.5", "1.5"))
+        self.assertEqual(classify_seniority(self.make_record("Data Analyst", "1.5 years of experience"))[0], "Unknown")
+
+    def test_company_age_is_not_years_of_experience(self) -> None:
+        # Phrases from jobs_master (2026-10-05) where the first "N years" was
+        # the company's age and the real requirement, if any, came later.
+        cases = (
+            ("leading the way in technology projects for over 15 years. 4+ years of experience", ("4", "4")),
+            ("one of Canada's best employers for the past 8 years committed to continuous learning", ("", "")),
+            ("a leader in AI training data for over 30 years", ("", "")),
+            ("7 years on the market, 500+ employees. Have 2 years in an analytical role", ("2", "2")),
+            ("ми на ринку вже 13 років; game data analyst — від 2 років", ("2", "2")),
+            ("4 роки на ринку — стабільна компанія. 3+ роки досвіду як marketing analyst", ("3", "3")),
+            ("команда, яка вже понад 4 роки успішно працює на ринку", ("", "")),
+        )
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(infer_experience_years(text), expected)
+
+    def test_requirement_next_to_a_company_age_word_is_kept(self) -> None:
+        self.assertEqual(infer_experience_years("over 5 years of experience in analytics"), ("5", "5"))
+        self.assertEqual(infer_experience_years("маєш вже 2 роки досвіду в аналітиці"), ("2", "2"))
+        self.assertEqual(infer_experience_years("minimum 7 years in business intelligence"), ("7", "7"))
+
+    def test_seniority_ignores_words_about_other_people_or_the_company(self) -> None:
+        # Real (title, text) pairs from jobs_master whose seniority came from a
+        # word inside another word or about someone else (2026-10-05).
+        cases = (
+            ("Analytics Engineer, Data", "share access to internal tools"),
+            ("Quant Researcher (MFT Focus)", "a ventures arm that invests in early stage DeFi projects"),
+            ("Python and Kubernetes Software Engineer", "undergraduate degree in a technical subject"),
+            ("Unity Catalog Business Definitions Analyst", "Rajesh K • 3rd\n\nLead - Talent Acquisition"),
+            ("Associate Business Analyst", "platform configuration, and internal quality assurance"),
+            ("Business Analyst", "Binance is a leading global blockchain ecosystem"),
+            ("Product Data Analyst", "робота з product managers, щоб формувати метрики"),
+            ("Product Analyst", "зустріч з твоїм потенційним керівником"),
+            ("Business Analyst", "presentations for senior stakeholders"),
+        )
+        for title, text in cases:
+            with self.subTest(title=title, text=text):
+                self.assertEqual(classify_seniority(self.make_record(title, text))[0], "Unknown")
+
+    def test_seniority_reads_the_title_first(self) -> None:
+        self.assertEqual(classify_seniority(self.make_record("Sr. Business Analyst", ""))[0], "Senior")
+        self.assertEqual(classify_seniority(self.make_record("JR/Business Analyst", ""))[0], "Junior")
+        self.assertEqual(classify_seniority(self.make_record("Data Analytics Trainee", ""))[0], "Junior")
+        self.assertEqual(classify_seniority(self.make_record("Stage - Data Analyst", ""))[0], "Junior")
+        self.assertEqual(
+            classify_seniority(self.make_record("Middle Data Analyst", "Growe is a leading business accelerator"))[0],
+            "Mid-level",
+        )
+        self.assertEqual(
+            classify_seniority(self.make_record("Senior Data Analyst", "You will mentor junior analysts"))[0], "Senior"
+        )
+
+    def test_seniority_reads_the_posting_describing_its_own_level(self) -> None:
+        cases = (
+            ("Analytics Engineer", "We're hiring a senior product data analyst to own", "Senior"),
+            ("Data Analyst (Marketing Analytics)", "Ми шукаємо data analyst рівня middle+", "Mid-level"),
+            ("Data Analyst - Global Markets", "New grads are welcome!", "Junior"),
+            ("Summer Associate", "a 12-week internship program beginning in May 2027", "Junior"),
+            ("Data Analyst", "stage de 6 mois à Paris", "Junior"),
+        )
+        for title, text, expected in cases:
+            with self.subTest(title=title):
+                self.assertEqual(classify_seniority(self.make_record(title, text))[0], expected)
 
     def test_splits_required_and_preferred_with_ukrainian_markers(self) -> None:
         analyzed = analyze_record(

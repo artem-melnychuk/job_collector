@@ -20,8 +20,8 @@ data/raw/*
 # pass is a reviewable, revertible commit instead of an in-place overwrite.
 data/processed/*
 !data/processed/.gitkeep
-!data/processed/crypto_jobs_clean_v1.xlsx
-!data/processed/crypto_jobs_clean_v1.csv
+!data/processed/jobs_clean_v1.xlsx
+!data/processed/jobs_clean_v1.csv
 
 logs/*
 !logs/.gitkeep

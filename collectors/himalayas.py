@@ -16,6 +16,9 @@ Verified live 2026-09-30 against the API docs
 - Pages hold at most 20 jobs; ``page`` is 1-based. The API is rate limited
   (HTTP 429) and its data is refreshed once a day, so the collector reads a
   few pages per term with the usual request delay and no more.
+- A page can hold fewer than 20 jobs in the middle of the results (seen
+  2026-10-06: Canonical's pages 1-3 held 2, 17 and 15 of 308), so
+  ``totalCount``, not a short page, says whether more pages follow.
 
 Salary is structured (``minSalary``/``maxSalary``/``currency``/
 ``salaryPeriod``) on part of the postings. The docs ask anyone displaying
@@ -29,6 +32,7 @@ import asyncio
 import html
 import random
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlencode
@@ -36,7 +40,7 @@ from urllib.parse import urlencode
 from bs4 import BeautifulSoup
 from playwright.async_api import BrowserContext
 
-from collectors.base import BaseCollector, CollectorResult, get_with_retry, setting
+from collectors.base import BaseCollector, CollectorResult, HttpStatusError, get_with_retry, setting
 from core.ids import build_job_id, normalize_url
 from core.metadata import query_matches
 from core.models import JobRecord
@@ -47,6 +51,10 @@ DEFAULT_TERMS = ("analyst", "analytics")
 DEFAULT_COUNTRY = "France"
 DEFAULT_MAX_PAGES = 5
 PAGE_SIZE = 20
+# Availability check: pages read per company before giving up (1,000
+# postings). The largest seen on 2026-10-06 were Canonical (308) and micro1
+# (284), 16 and 15 pages.
+COMPANY_MAX_PAGES = 50
 PERIOD_SUFFIX = {"annual": "/year", "yearly": "/year", "monthly": "/month", "hourly": "/hour", "weekly": "/week", "daily": "/day"}
 # A posting can list dozens of eligible countries; keep the stored location readable.
 MAX_LOCATIONS_SHOWN = 6
@@ -74,6 +82,30 @@ def parse_jobs(payload: Any) -> list[dict[str, Any]]:
         return []
     jobs = payload.get("jobs")
     return [job for job in jobs if isinstance(job, dict) and job.get("title")] if isinstance(jobs, list) else []
+
+
+def total_count(payload: Any) -> int | None:
+    """The search's ``totalCount``, or None when the answer has none."""
+    value = payload.get("totalCount") if isinstance(payload, dict) else None
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def has_more_pages(payload: Any, page: int, jobs_on_page: int) -> bool:
+    """Whether the results go on after ``page``.
+
+    ``totalCount`` decides. A short page is not the end: Canonical's company
+    search answered 2 jobs on page 1 and its listing ran to page 16. Only an
+    answer without ``totalCount`` falls back to stopping at a short page.
+    """
+    total = total_count(payload)
+    if total is not None:
+        return page * PAGE_SIZE < total
+    return jobs_on_page >= PAGE_SIZE
 
 
 def format_salary(job: dict[str, Any]) -> str:
@@ -153,6 +185,26 @@ def build_company_url(slug: str, page: int = 1) -> str:
     return f"{HIMALAYAS_SEARCH_URL}?{urlencode({'company': slug, 'page': page})}"
 
 
+@dataclass
+class CompanyListing:
+    """The postings the API lists as open for one company.
+
+    ``complete`` is True only when every page that ``totalCount`` promises was
+    read. A posting missing from an incomplete listing proves nothing, so it
+    is "unknown", never "closed".
+    """
+
+    urls: set[str] = field(default_factory=set)
+    complete: bool = False
+    error: str = ""
+    rate_limited: bool = False
+
+    def status_of(self, url: str) -> str:
+        if normalize_url(url) in self.urls:
+            return "active"
+        return "closed" if self.complete else "unknown"
+
+
 async def fetch_company_job_urls(
     context: BrowserContext,
     slug: str,
@@ -161,29 +213,45 @@ async def fetch_company_job_urls(
     retry_attempts: int = 0,
     delay_min_seconds: float = 1.0,
     delay_max_seconds: float = 1.0,
-    max_pages: int = 10,
-) -> set[str]:
+    max_pages: int = COMPANY_MAX_PAGES,
+) -> CompanyListing:
     """Normalized URLs of every posting the company currently has open.
 
     Used by --check-availability: Himalayas job pages sit behind a
     Cloudflare challenge (HTTP 403 "Just a moment...", seen 2026-10-01), so
     opening a saved URL tells nothing, while the API's company filter lists
     what is still live - the same approach as the Greenhouse/Lever check.
+
+    Pages are read until ``totalCount`` is covered. Reaching ``max_pages``
+    first, a failed page, or an answer without ``totalCount`` leaves the
+    listing incomplete. Until 2026-10-06 the walk stopped after 10 pages or
+    at the first short page and its result was taken as the whole list:
+    micro1 has 283 open postings and only the first 200 were read, and
+    Canonical's first page held 2 of 278, so open postings were marked closed.
     """
-    urls: set[str] = set()
+    listing = CompanyListing()
     for page in range(1, max_pages + 1):
-        if page > 1:
-            await asyncio.sleep(random.uniform(delay_min_seconds, max(delay_min_seconds, delay_max_seconds)))
-        response = await get_with_retry(
-            context, build_company_url(slug, page), timeout_ms=timeout_ms, retry_attempts=retry_attempts,
-            delay_min_seconds=delay_min_seconds, delay_max_seconds=delay_max_seconds,
-        )
-        jobs = parse_jobs(await response.json())
-        urls.update(normalize_url(clean_text(job.get("guid") or job.get("applicationLink"))) for job in jobs)
-        if len(jobs) < PAGE_SIZE:
+        # Page 1 waits too, so one-page companies checked in a row are spaced
+        # like pages are (the API is rate limited, HTTP 429).
+        await asyncio.sleep(random.uniform(delay_min_seconds, max(delay_min_seconds, delay_max_seconds)))
+        try:
+            response = await get_with_retry(
+                context, build_company_url(slug, page), timeout_ms=timeout_ms, retry_attempts=retry_attempts,
+                delay_min_seconds=delay_min_seconds, delay_max_seconds=delay_max_seconds,
+            )
+            payload = await response.json()
+        except Exception as error:  # noqa: BLE001 - reported through the listing, which stays incomplete
+            listing.error = f"page {page}: {error}"
+            listing.rate_limited = isinstance(error, HttpStatusError) and error.status == 429
             break
-    urls.discard("")
-    return urls
+        jobs = parse_jobs(payload)
+        listing.urls.update(normalize_url(clean_text(job.get("guid") or job.get("applicationLink"))) for job in jobs)
+        if not has_more_pages(payload, page, len(jobs)):
+            # Without totalCount the short page is only a guess at the end.
+            listing.complete = total_count(payload) is not None
+            break
+    listing.urls.discard("")
+    return listing
 
 
 class HimalayasCollector(BaseCollector):
@@ -218,7 +286,8 @@ class HimalayasCollector(BaseCollector):
                         context, build_search_url(term, country, page), timeout_ms=timeout_ms,
                         retry_attempts=retry_attempts, delay_min_seconds=delay_min, delay_max_seconds=delay_max,
                     )
-                    jobs = parse_jobs(await response.json())
+                    payload = await response.json()
+                    jobs = parse_jobs(payload)
                 except Exception as error:
                     result.errors += 1
                     result.error_messages.append(f"Himalayas {term!r} page {page}: {error}")
@@ -235,7 +304,7 @@ class HimalayasCollector(BaseCollector):
                     if record.url and record.url not in seen_urls:
                         seen_urls.add(record.url)
                         result.records.append(record)
-                if len(jobs) < PAGE_SIZE:
+                if not has_more_pages(payload, page, len(jobs)):
                     break  # last page of results for this term
 
         result.found = len(result.records)

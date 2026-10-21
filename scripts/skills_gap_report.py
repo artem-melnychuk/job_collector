@@ -147,7 +147,7 @@ def _write_recommendations_sheet(workbook, recommendations, market_total: int) -
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    path = PROJECT_ROOT / "data" / "processed" / "crypto_jobs_clean_v1.xlsx"
+    path = PROJECT_ROOT / "data" / "processed" / "jobs_clean_v1.xlsx"
     workbook = openpyxl.load_workbook(path)
     master_by_id = {row.get("job_id"): row for row in _sheet_rows(workbook["jobs_master"])}
     review_rows = _sheet_rows(workbook["manual_review"])

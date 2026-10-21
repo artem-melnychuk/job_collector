@@ -178,6 +178,21 @@ class MetadataTests(unittest.TestCase):
             is_overqualified("Data Analyst", "150+ years of combined experience. You have 4+ years of experience", exclusion)
         )
 
+    def test_overqualified_reads_decimal_and_or_more_years(self) -> None:
+        exclusion = {"min_years_experience": 3}
+        # Regression: "1.5 years" read as 5 years.
+        self.assertFalse(is_overqualified("Data Analyst", "1.5 years of experience with SQL", exclusion))
+        self.assertTrue(is_overqualified("Data Analyst", "3.5 years of experience with SQL", exclusion))
+        # Stackadapt's phrasing (jobs_master, 2026-10-05) was not read at all.
+        self.assertTrue(
+            is_overqualified("Data Analyst", "3 or more years of experience in product analytics", exclusion)
+        )
+
+    def test_overqualified_ignores_company_age(self) -> None:
+        exclusion = {"min_years_experience": 3}
+        self.assertFalse(is_overqualified("Data Analyst", "a track record of growth for the past 8 years", exclusion))
+        self.assertTrue(is_overqualified("Data Analyst", "over 5 years of experience in analytics", exclusion))
+
     def test_requires_french_detects_explicit_phrase_and_language_density(self) -> None:
         exclusion = {
             "french_phrases": ["français courant", "fluent in french"],

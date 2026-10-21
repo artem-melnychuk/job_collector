@@ -5,7 +5,14 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
-from core.metadata import MAX_EXPERIENCE_YEARS, normalize_salary_usd, split_city_region
+from core.metadata import (
+    MAX_EXPERIENCE_YEARS,
+    YEARS_NUMBER,
+    is_company_age,
+    normalize_salary_usd,
+    split_city_region,
+    years_to_number,
+)
 from core.models import JobRecord
 
 
@@ -111,53 +118,78 @@ def classify_role(record: JobRecord) -> tuple[str, str]:
 # French "an"/"ans" needs the closing \b: without it "ans?" matched the start
 # of "and"/"analytics", so "founded in 2017 and" read as 2017 years. Italian
 # "anni"/"anno" used to get in through that same prefix match, so it is
-# listed explicitly. (?<!\d) keeps a match from starting mid-number, and
-# (?!\d+-year\b) skips the adjective in "a 4-year university/degree".
+# listed explicitly; Spanish "años" too. (?!\d+-year\b) skips the adjective
+# in "a 4-year university/degree". A range takes any dash ("0–2 years" used to
+# read as 2) or "to"; "3 or more years" is a minimum of 3.
 _EXPERIENCE_YEARS_PATTERN = re.compile(
-    r"(?<!\d)(?!\d+-year\b)(\d+)\s*(?:\+|to|-)?\s*(\d*)\s*(?:years?|ans?|ann[io])\b"
+    rf"(?!\d+-year\b){YEARS_NUMBER}\s*(?:\+|or\s+more|to|[-–—])?\s*(\d+(?:[.,]\d+)?)?\s*\+?\s*"
+    r"(?:years?|ans?|ann[io]|años)\b"
 )
 # Ukrainian/Russian phrasing (Djinni.co postings): "3х років", "від 3
-# років", "1+ рік", "5 лет" — a separate pattern since the word for
-# "years" isn't a simple suffix variant of the English/French one.
-_EXPERIENCE_YEARS_PATTERN_UK_RU = re.compile(r"(?<!\d)(\d+)\s*х?\+?\s*(?:рок(?:и|ів|у)?|рік|лет|года?)")
+# років", "від 1-2 років", "1+ рік", "5 лет" — a separate pattern since the
+# word for "years" isn't a simple suffix variant of the English/French one.
+_EXPERIENCE_YEARS_PATTERN_UK_RU = re.compile(
+    rf"{YEARS_NUMBER}\s*(?:[-–—]\s*(\d+(?:[.,]\d+)?))?\s*х?\+?\s*(?:рок(?:и|ів|у)?|рік|лет|года?)"
+)
 
 
 def _plausible_years(minimum: str, maximum: str) -> bool:
     # Calendar years ("у 2015 році", "Global 2000 and") are not experience.
-    return all(int(value) <= MAX_EXPERIENCE_YEARS for value in (minimum, maximum) if value)
+    return all(years_to_number(value) <= MAX_EXPERIENCE_YEARS for value in (minimum, maximum) if value)
 
 
 def infer_experience_years(text: str) -> tuple[str, str]:
+    """First plausible "N years" requirement, as (minimum, maximum) text, "1,5" written "1.5"."""
     lowered = text.casefold()
-    matches = [match for match in _EXPERIENCE_YEARS_PATTERN.findall(lowered) if _plausible_years(*match)]
-    if not matches:
-        matches = [
-            (value, "") for value in _EXPERIENCE_YEARS_PATTERN_UK_RU.findall(lowered) if _plausible_years(value, "")
-        ]
-    if not matches:
-        return "", ""
-    minimum, maximum = matches[0]
-    return minimum, maximum or minimum
+    for pattern in (_EXPERIENCE_YEARS_PATTERN, _EXPERIENCE_YEARS_PATTERN_UK_RU):
+        for match in pattern.finditer(lowered):
+            minimum, maximum = ((value or "").replace(",", ".") for value in match.groups())
+            if _plausible_years(minimum, maximum) and not is_company_age(lowered, match.start(), match.end()):
+                return minimum, maximum or minimum
+    return "", ""
+
+
+# Seniority words are looked up in the title first. In the posting text they
+# mostly describe someone else or the company: "report to the manager", "lead
+# projects", "senior stakeholders", "early stage", "internal tools",
+# "undergraduate degree", a recruiter's "Lead - Talent Acquisition" on the
+# LinkedIn page. English words need word boundaries for the same reason.
+TITLE_SENIORITY_RULES = (
+    (
+        "Junior",
+        r"\b(?:intern(?:ship)?s?|stage|alternance|apprentice(?:ship)?s?|graduate|junior|jr|trainee|entry[- ]level)\b"
+        r"|джун(?:іор|иор)?|молодш(?:ий|а)\b|стажер|стажист|практикант",
+    ),
+    ("Manager", r"\b(?:manager|director|head of)\b|керівник"),
+    ("Lead", r"\b(?:lead|principal|staff)\b|тімлід|team\s*lead|провідний"),
+    ("Senior", r"\b(?:senior|sr)\b|expert haut niveau|сеньйор|синьйор|старш(?:ий|а)"),
+    ("Mid-level", r"\b(?:confirm[ée]e?|middle)\b|мідл|миддл"),
+)
+# In the text only words that name the posting's own level: "we're hiring a
+# senior product data analyst", "аналітик рівня middle+". French "stage" is an
+# internship only as "stage de/d'..."; English "stage" never is.
+_SELF_LEVEL = r"(?:\b(?:hiring|seeking|looking\s+for)\s+(?:an?\s+)?|рівня\s+|уровня\s+)"
+_TEXT_JUNIOR = (
+    r"\b(?:internships?|junior|entry[- ]level|alternance|apprentice(?:ship)?s?|(?:recent|new)\s+grad(?:uate)?s?)\b"
+    r"|\bstage\s+(?:de\b|d['’])|джун(?:іор|иор)?|молодш(?:ий|а)\s|стажер|стажист|практикант"
+)
+_TEXT_SENIOR = rf"{_SELF_LEVEL}senior\b|expert haut niveau|сеньйор|синьйор|старш(?:ий|а)"
+_TEXT_MID = rf"{_SELF_LEVEL}middle\b|мідл|миддл"
 
 
 def classify_seniority(record: JobRecord) -> tuple[str, str, str]:
-    text = _text(record)
-    minimum, maximum = infer_experience_years(text)
-    if re.search(
-        r"intern|internship|stage|alternance|apprentice|graduate|junior|entry[- ]level"
-        r"|джун(?:іор|иор)?|молодш(?:ий|а)\s|стажер|стажист|практикант",
-        text,
-    ):
+    minimum, maximum = infer_experience_years(_text(record))
+    years = years_to_number(minimum) if minimum else 0.0
+    title = record.title.casefold()
+    for level, pattern in TITLE_SENIORITY_RULES:
+        if re.search(pattern, title):
+            return level, minimum, maximum
+    text = record.full_text.casefold()
+    if re.search(_TEXT_JUNIOR, text):
         return "Junior", minimum, maximum
-    if re.search(r"manager|director|head of|керівник", text):
-        return "Manager", minimum, maximum
-    if re.search(r"lead|principal|staff|тімлід|team\s*lead|провідний", text):
-        return "Lead", minimum, maximum
-    if re.search(r"senior|expert haut niveau|сеньйор|синьйор|старш(?:ий|а)", text) or (minimum and int(minimum) >= 5):
+    if re.search(_TEXT_SENIOR, text) or years >= 5:
         return "Senior", minimum, maximum
-    if re.search(r"confirm[ée]|мідл|миддл|\bmiddle\b", text):
-        return "Mid-level", minimum, maximum
-    if minimum and int(minimum) >= 3:
+    if re.search(_TEXT_MID, text) or years >= 3:
         return "Mid-level", minimum, maximum
     return "Unknown", minimum, maximum
 

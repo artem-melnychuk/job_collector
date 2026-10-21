@@ -51,6 +51,15 @@ def setting(settings: dict[str, Any], *keys: str, default: Any = None) -> Any:
     return default if value is None else value
 
 
+class HttpStatusError(RuntimeError):
+    """A non-OK HTTP answer, kept with its status so a caller can tell a rate
+    limit (429) from other failures."""
+
+    def __init__(self, status: int) -> None:
+        super().__init__(f"HTTP {status}")
+        self.status = status
+
+
 async def get_with_retry(
     context: BrowserContext,
     url: str,
@@ -77,7 +86,7 @@ async def get_with_retry(
             response = await context.request.get(url, timeout=timeout_ms)
             if response.ok:
                 return response
-            last_error = RuntimeError(f"HTTP {response.status}")
+            last_error = HttpStatusError(response.status)
         except Exception as error:  # noqa: BLE001 - surfaced to the caller after retries are exhausted
             last_error = error
         if attempt < attempts - 1:

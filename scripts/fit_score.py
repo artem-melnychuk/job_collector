@@ -24,7 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from core.fit_score import DEFAULT_MODEL, load_master_cv_text, score_record
 from core.storage import load_manual_review, load_records, save_records
 
-DATA_PATH = PROJECT_ROOT / "data" / "processed" / "crypto_jobs_clean_v1.xlsx"
+DATA_PATH = PROJECT_ROOT / "data" / "processed" / "jobs_clean_v1.xlsx"
 DEFAULT_CV_PATH = PROJECT_ROOT / "CV" / "resume_improved.html"
 
 

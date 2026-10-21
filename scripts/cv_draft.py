@@ -28,7 +28,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from core.cv_draft import DEFAULT_MODEL, generate_draft, load_master_cv_text, render_draft_markdown
 from core.storage import load_manual_review, load_records
 
-DATA_PATH = PROJECT_ROOT / "data" / "processed" / "crypto_jobs_clean_v1.xlsx"
+DATA_PATH = PROJECT_ROOT / "data" / "processed" / "jobs_clean_v1.xlsx"
 DEFAULT_CV_PATH = PROJECT_ROOT / "CV" / "resume_improved.html"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "CV" / "drafts"
 

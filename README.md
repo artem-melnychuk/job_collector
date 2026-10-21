@@ -43,6 +43,7 @@ SEARCH -> COLLECT -> DEDUPLICATE -> SAVE RAW -> MERGE INTO DATASET
 | Welcome to the Jungle | Playwright | Opt-in only (`--source wttj`) |
 | Work.ua, Robota.ua | Playwright | Implemented, but blocked by anti-bot protection; opt-in only |
 | Indeed | — | Checked, not addable: the RSS feed was removed (HTTP 404) and search sits behind a Cloudflare captcha (HTTP 403) |
+| Dover startup jobs | — | Checked, not added: job data comes only from its `/api/`, which the site's `robots.txt` disallows; job pages are client-rendered shells. A manual search found 2 "data analyst" postings |
 
 ## What the data shows
 

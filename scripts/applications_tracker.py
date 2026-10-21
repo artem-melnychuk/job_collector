@@ -37,7 +37,7 @@ from core.applications import (
 from core.storage import arrange_workbook_tabs, load_manual_review, load_records
 from scripts.active_near_fit_report import copy_applied_marks, refresh_active_near_fit
 
-DATA_PATH = PROJECT_ROOT / "data" / "processed" / "crypto_jobs_clean_v1.xlsx"
+DATA_PATH = PROJECT_ROOT / "data" / "processed" / "jobs_clean_v1.xlsx"
 DEFAULT_DRAFTS_DIR = PROJECT_ROOT / "CV" / "drafts"
 SHEET_NAME = "applications"
 HAND_ENTRY_ROWS = 300

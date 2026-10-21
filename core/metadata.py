@@ -41,29 +41,55 @@ def query_matches(query: str, title: str) -> bool:
 # years of combined experience"). Shared with core/analyzer.py.
 MAX_EXPERIENCE_YEARS = 30
 
-# (?<!\d): with a bare \d{1,2} the regex also matched the tail of a longer
-# number, so "150+ years of combined experience" read as 50 years.
-_YEARS_PATTERN = re.compile(r"(?<!\d)(\d+)\s*(?:[-–—]|to)\s*(\d+)\s*years?|(?<!\d)(\d+)\+?\s*years?")
+# A number of years, whole or decimal ("1.5", Ukrainian "1,5"). (?<![\d.,])
+# keeps a match from starting inside a longer number: a bare \d{1,2} read
+# "150+ years of combined experience" as 50 years and "1.5 years" as 5.
+YEARS_NUMBER = r"(?<![\d.,])(\d+(?:[.,]\d+)?)"
+_YEARS_PATTERN = re.compile(
+    rf"{YEARS_NUMBER}\s*(?:[-–—]|to)\s*(\d+(?:[.,]\d+)?)\s*years?|{YEARS_NUMBER}\+?\s*(?:or\s+more\s+)?years?"
+)
 # A bare "N years" also matches unrelated mentions like "founded 50 years ago" —
 # only count it as an experience requirement when a context word sits nearby.
 _YEARS_CONTEXT_WORDS = ("experience", "expérience", "expertise", "background", "track record")
 
+# Words around "N years" that describe the company rather than the candidate,
+# from collected postings: "for over 15 years", "for the past 8 years",
+# "7 years on the market", "ми на ринку вже 13 років", "вже понад 4 роки".
+_COMPANY_AGE_BEFORE = re.compile(r"(?:\b(?:over|past|last|nearly|almost)|\bmore\s+than|вже|уже|понад|более)\s*$")
+_COMPANY_AGE_AFTER = re.compile(r"^\W*(?:ago\b|on\s+the\s+market|на\s+ринку|на\s+рынке)")
+# "over 5 years of experience", "вже 2 роки досвіду" are still requirements.
+_EXPERIENCE_AFTER = re.compile(r"^\s*(?:of\s+)?(?:\w+\s+){0,2}?(?:experience|expérience|досвід|опыт)")
 
-def _max_years_mentioned(text: str) -> int:
+
+def years_to_number(value: str) -> float:
+    return float(value.replace(",", "."))
+
+
+def is_company_age(text: str, start: int, end: int) -> bool:
+    """Whether the "N years" at text[start:end] is the company's age, not a requirement."""
+    after = text[end: end + 40]
+    if _EXPERIENCE_AFTER.match(after):
+        return False
+    return bool(_COMPANY_AGE_BEFORE.search(text[max(0, start - 30): start]) or _COMPANY_AGE_AFTER.match(after))
+
+
+def _max_years_mentioned(text: str) -> float:
     """Highest experience *floor* mentioned, e.g. the 3 in "3-5 years".
 
     A "3-5 years" posting's real bar to clear is the lower bound (3); using
     the range's upper bound instead overstated the requirement and rejected
     postings whose actual minimum was within reach.
     """
-    best = 0
+    best = 0.0
     for match in _YEARS_PATTERN.finditer(text):
         window = text[max(0, match.start() - 40): match.end() + 40]
         if not any(word in window for word in _YEARS_CONTEXT_WORDS):
             continue
+        if is_company_age(text, match.start(), match.end()):
+            continue
         range_low, _range_high, single = match.groups()
-        floor = int(range_low) if range_low else (int(single) if single else None)
-        if floor is not None and floor <= MAX_EXPERIENCE_YEARS:
+        floor = years_to_number(range_low or single)
+        if floor <= MAX_EXPERIENCE_YEARS:
             best = max(best, floor)
     return best
 

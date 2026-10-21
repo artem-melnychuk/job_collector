@@ -20,7 +20,7 @@ storage:
   raw_dir: "data/raw"
   processed_dir: "data/processed"
   logs_dir: "logs"
-  processed_filename: "crypto_jobs_clean_v1.xlsx"
+  processed_filename: "jobs_clean_v1.xlsx"
 
 browser:
   profile_dir: ".browser_profile"

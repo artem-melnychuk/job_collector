@@ -26,7 +26,7 @@ from core.cv_draft import load_master_cv_text
 from core.cv_review import DEFAULT_MODEL, append_review_section, generate_review, has_review
 from core.storage import load_records
 
-DATA_PATH = PROJECT_ROOT / "data" / "processed" / "crypto_jobs_clean_v1.xlsx"
+DATA_PATH = PROJECT_ROOT / "data" / "processed" / "jobs_clean_v1.xlsx"
 DEFAULT_CV_PATH = PROJECT_ROOT / "CV" / "resume_improved.html"
 DEFAULT_DRAFTS_DIR = PROJECT_ROOT / "CV" / "drafts"
 

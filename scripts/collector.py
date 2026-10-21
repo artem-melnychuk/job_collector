@@ -36,7 +36,7 @@ from collectors.wttj import (
 from collectors.base import get_with_retry
 from collectors.djinni import DjinniCollector
 from collectors.dou import DouCollector
-from collectors.himalayas import HimalayasCollector, company_slug_from_url, fetch_company_job_urls
+from collectors.himalayas import CompanyListing, HimalayasCollector, company_slug_from_url, fetch_company_job_urls
 from collectors.jobicy import JobicyCollector
 from collectors.remoteok import RemoteOkCollector
 from collectors.weworkremotely import WeWorkRemotelyCollector
@@ -44,7 +44,6 @@ from collectors.work_ua import STEALTH_HEADERS, STEALTH_LOCALE, STEALTH_USER_AGE
 from collectors.robota_ua import RobotaUaCollector
 from core.config import load_configuration, select_queries
 from core.deduplication import deduplicate_records
-from core.ids import normalize_url
 from core.logging import RunStats, write_run_log
 from core.metadata import (
     extract_salary,
@@ -88,6 +87,21 @@ from core.storage import load_records, merge_records, save_records
 # check would wrongly reject legitimate results.
 CONTEXT_FILTERED_SOURCES = {"LinkedIn", "Welcome to the Jungle"}
 
+# --source value -> the source name saved on records.
+SOURCE_NAMES = {
+    "linkedin": LinkedInCollector.source_name,
+    "wttj": WttjCollector.source_name,
+    "company_careers": CompanyCareersCollector.source_name,
+    "djinni": DjinniCollector.source_name,
+    "dou": DouCollector.source_name,
+    "remoteok": RemoteOkCollector.source_name,
+    "weworkremotely": WeWorkRemotelyCollector.source_name,
+    "jobicy": JobicyCollector.source_name,
+    "himalayas": HimalayasCollector.source_name,
+    "work_ua": WorkUaCollector.source_name,
+    "robota_ua": RobotaUaCollector.source_name,
+}
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -100,7 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
         # "all" deliberately excludes wttj (see collect_sources) — it stays
         # selectable on its own for anyone who wants to re-check it.
         default="all",
-        help="Source adapter to use (default: all).",
+        help="Source adapter to use (default: all). With --check-availability, recheck only this source's rows.",
     )
     parser.add_argument(
         "--query",
@@ -419,7 +433,7 @@ async def run_collection(args: argparse.Namespace) -> int:
     raw_path = resolve_path(args.output) if args.output else default_raw_path()
     processed_path = resolve_path(
         Path(str(settings.get("storage", {}).get("processed_dir", "data/processed")))
-        / str(settings.get("storage", {}).get("processed_filename", "crypto_jobs_clean_v1.xlsx"))
+        / str(settings.get("storage", {}).get("processed_filename", "jobs_clean_v1.xlsx"))
     )
     existing = load_records(processed_path)
     merged, merge_counts = merge_records(existing, unique_result.records)
@@ -500,6 +514,14 @@ def keep_known_closed(previous: str, current: str) -> str:
     return current
 
 
+def select_records_to_check(records: list, source: str, limit: int) -> list:
+    """The saved records an availability check covers: all of them, or only
+    one source's (--source), capped at --check-limit."""
+    if source != "all":
+        records = [record for record in records if record.source == SOURCE_NAMES[source]]
+    return records[:limit]
+
+
 def detect_generic_availability(http_status: int | None, body_text: str) -> str:
     """Classify a career page when no source-specific detector is available."""
     lowered = body_text.casefold()
@@ -562,12 +584,12 @@ async def run_availability_check(args: argparse.Namespace) -> int:
     settings = configuration["settings"]
     processed_path = resolve_path(
         Path(str(settings.get("storage", {}).get("processed_dir", "data/processed")))
-        / str(settings.get("storage", {}).get("processed_filename", "crypto_jobs_clean_v1.xlsx"))
+        / str(settings.get("storage", {}).get("processed_filename", "jobs_clean_v1.xlsx"))
     )
     records = load_records(processed_path)
     for record in records:
         backfill_saved_metadata(record)
-    records_to_check = records[: args.check_limit]
+    records_to_check = select_records_to_check(records, args.source, args.check_limit)
     profile_dir = resolve_path(
         args.profile_dir
         or Path(str(settings.get("browser", {}).get("profile_dir", ".browser_profile")))
@@ -586,7 +608,8 @@ async def run_availability_check(args: argparse.Namespace) -> int:
     configured_boards = {
         (board["ats"], board["slug"]): board for board in configured_career_boards(configuration["companies"])
     }
-    himalayas_cache: dict[str, set[str]] = {}
+    himalayas_cache: dict[str, CompanyListing] = {}
+    himalayas_rate_limited = False
 
     profile_dir.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as playwright:
@@ -624,15 +647,33 @@ async def run_availability_check(args: argparse.Namespace) -> int:
                         # Job pages are behind a Cloudflare challenge; ask the
                         # API which postings the company still lists instead.
                         slug = company_slug_from_url(record.url)
+                        # A posting missing from an incomplete listing (page
+                        # limit, failed page) is "unknown", not "closed".
                         if not slug:
                             status = "unknown"
                         else:
-                            if slug not in himalayas_cache:
-                                himalayas_cache[slug] = await fetch_company_job_urls(
+                            if slug not in himalayas_cache and himalayas_rate_limited:
+                                # After a 429 the remaining companies are not
+                                # asked again in this run; an empty incomplete
+                                # listing leaves their postings "unknown".
+                                himalayas_cache[slug] = CompanyListing()
+                            elif slug not in himalayas_cache:
+                                listing = await fetch_company_job_urls(
                                     context, slug, timeout_ms=timeout_ms, retry_attempts=retry_attempts,
                                     delay_min_seconds=delay_min, delay_max_seconds=delay_max,
                                 )
-                            status = "active" if normalize_url(record.url) in himalayas_cache[slug] else "closed"
+                                himalayas_cache[slug] = listing
+                                if listing.error:
+                                    errors += 1
+                                    print(f"Himalayas listing for {slug} failed ({listing.error}); "
+                                          "postings not in it are left unknown")
+                                elif not listing.complete:
+                                    print(f"Himalayas listing for {slug} is incomplete ({len(listing.urls)} read); "
+                                          "postings not in it are left unknown")
+                                if listing.rate_limited:
+                                    himalayas_rate_limited = True
+                                    print("Himalayas answered HTTP 429; other Himalayas companies are skipped this run")
+                            status = himalayas_cache[slug].status_of(record.url)
                     else:
                         response = await page.goto(record.url, wait_until="domcontentloaded", timeout=timeout_ms)
                         await page.wait_for_timeout(delay_ms)

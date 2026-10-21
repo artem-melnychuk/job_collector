@@ -9,6 +9,7 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
 
+from collectors.himalayas import CompanyListing
 from core.logging import RunStats, write_run_log
 from core.models import JobRecord
 from core.storage import (
@@ -25,6 +26,7 @@ from scripts.collector import (
     detect_generic_availability,
     keep_known_closed,
     parse_ats_board,
+    select_records_to_check,
 )
 
 
@@ -432,6 +434,27 @@ class AvailabilityTests(unittest.TestCase):
         self.assertEqual(keep_known_closed("active", "unknown"), "unknown")
         self.assertEqual(keep_known_closed("closed", "active"), "active")
         self.assertEqual(keep_known_closed("", "closed"), "closed")
+
+    def test_himalayas_recheck_reopens_a_posting_closed_by_a_truncated_listing(self) -> None:
+        # micro1's Data Analyst was saved "closed" while open (a 200-posting
+        # cap). Found in a listing, it must come back "active" despite
+        # keep_known_closed; an incomplete listing that misses it says
+        # nothing, so the saved status stays.
+        url = "https://himalayas.app/companies/micro1/jobs/data-analyst-6163999369"
+        found = CompanyListing(urls={url}, complete=False)
+        self.assertEqual(keep_known_closed("closed", found.status_of(url)), "active")
+        missing = CompanyListing(urls=set(), complete=False)
+        self.assertEqual(keep_known_closed("closed", missing.status_of(url)), "closed")
+        self.assertEqual(keep_known_closed("active", missing.status_of(url)), "unknown")
+        self.assertEqual(keep_known_closed("active", CompanyListing(complete=True).status_of(url)), "closed")
+
+    def test_select_records_to_check_scopes_to_one_source(self) -> None:
+        records = [make_record(source="LinkedIn"), make_record(source="Himalayas"),
+                   make_record(source="We Work Remotely"), make_record(source="Himalayas")]
+        self.assertEqual([r.source for r in select_records_to_check(records, "himalayas", 50)], ["Himalayas"] * 2)
+        self.assertEqual(len(select_records_to_check(records, "himalayas", 1)), 1)
+        self.assertEqual([r.source for r in select_records_to_check(records, "weworkremotely", 50)], ["We Work Remotely"])
+        self.assertEqual(len(select_records_to_check(records, "all", 3)), 3)
 
     def test_generic_availability_detects_closed_djinni_banner(self) -> None:
         # Regression: Djinni returns HTTP 200 for a closed posting, only the

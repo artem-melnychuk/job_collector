@@ -32,7 +32,7 @@ from core.pdf_assembly import (
 )
 from core.storage import load_records
 
-DATA_PATH = PROJECT_ROOT / "data" / "processed" / "crypto_jobs_clean_v1.xlsx"
+DATA_PATH = PROJECT_ROOT / "data" / "processed" / "jobs_clean_v1.xlsx"
 DEFAULT_CV_PATH = PROJECT_ROOT / "CV" / "resume_improved.html"
 DEFAULT_DRAFTS_DIR = PROJECT_ROOT / "CV" / "drafts"
 
