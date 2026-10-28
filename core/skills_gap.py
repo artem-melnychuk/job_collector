@@ -23,11 +23,21 @@ from core.analyzer import SKILL_RULES
 # human-maintained document, not derived from collected postings. Updated
 # 2026-09-28 for the rewritten resume: Python moved out of PARTIAL_SKILLS
 # now that the CV shows two real personal projects with automated tests,
-# not just scripting.
+# not just scripting. Updated 2026-10-28 for the new resume: its Tools list
+# Power BI and Tableau, its experience lines name Snowflake, BigQuery and
+# A/B tests, its Skills list Statistics, and its projects use Claude Code,
+# ChatGPT and the Anthropic API.
 KNOWN_SKILLS = {
     "SQL",
     "Excel",
     "Python",
+    "Power BI",
+    "Tableau",
+    "Snowflake",
+    "BigQuery",
+    "Statistics",
+    "A/B testing",
+    "AI/LLM Tools",
 }
 
 # Skills the candidate has some exposure to but not at the depth postings
