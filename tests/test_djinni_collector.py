@@ -8,6 +8,7 @@ from collectors.djinni import (
     build_rss_url,
     extract_company,
     matches_primary_keyword,
+    parse_candidate_countries_from_detail_html,
     parse_company_from_detail_html,
     parse_rss_items,
     record_from_item,
@@ -46,21 +47,44 @@ class FakeResponse:
         return self._body
 
 
+# Trimmed from a real detail page (854047-junior-powerbi-engineer,
+# 2026-11-01), with the office line moved first: the candidate-countries
+# value is the location-text span that has a caption in its <li>.
+SAMPLE_DETAIL_PAGE = """
+<ul>
+  <li><div class="col">Office: <span class="location-text">Ukraine
+    <span>(Ivano-Frankivsk, Kyiv, Lviv)</span></span></div></li>
+  <li>
+    <strong class="d-block font-weight-600">
+      <span class="location-text">Ukraine</span>
+    </strong>
+    <div class="font-size-extra-small">Countries where we consider candidates</div>
+  </li>
+</ul>
+<a href="https://djinni.co/jobs/company-n-ix/">N-iX</a>
+"""
+
+
 class FakeRequest:
+    def __init__(self, detail_page: str = "") -> None:
+        self.detail_page = detail_page
+
     async def get(self, url: str, timeout: int) -> FakeResponse:
-        # RSS feed for the listing URL, an empty detail page for everything
-        # else (company name then falls back to the <strong> heuristic).
-        return FakeResponse(SAMPLE_RSS if "/jobs/rss/" in url else "")
+        # RSS feed for the listing URL, the detail page for everything else
+        # (empty by default: company name then falls back to the <strong>
+        # heuristic and city_region stays blank).
+        return FakeResponse(SAMPLE_RSS if "/jobs/rss/" in url else self.detail_page)
 
 
 class FakeContext:
-    request = FakeRequest()
+    def __init__(self, detail_page: str = "") -> None:
+        self.request = FakeRequest(detail_page)
 
 
-def run_collect(primary_keyword: str):
+def run_collect(primary_keyword: str, detail_page: str = ""):
     collector = DjinniCollector({"request": {"delay_min_seconds": 0, "delay_max_seconds": 0}})
     query = {"query": primary_keyword, "category": "data"}
-    return asyncio.run(collector.collect(FakeContext(), [query], limit=10))
+    return asyncio.run(collector.collect(FakeContext(detail_page), [query], limit=10))
 
 
 class DjinniCollectorTests(unittest.TestCase):
@@ -105,6 +129,18 @@ class DjinniCollectorTests(unittest.TestCase):
             '</a>'
         )
         self.assertEqual(parse_company_from_detail_html(html_page), "SKELAR")
+
+    def test_parse_candidate_countries_skips_the_office_location(self) -> None:
+        self.assertEqual(parse_candidate_countries_from_detail_html(SAMPLE_DETAIL_PAGE), "Ukraine")
+
+    def test_parse_candidate_countries_returns_empty_when_absent(self) -> None:
+        self.assertEqual(parse_candidate_countries_from_detail_html("<p>No countries here.</p>"), "")
+
+    def test_collect_stores_candidate_countries_in_city_region(self) -> None:
+        result = run_collect("Data Analyst", detail_page=SAMPLE_DETAIL_PAGE)
+        self.assertEqual(result.errors, 0)
+        self.assertEqual(result.records[0].company, "N-iX")
+        self.assertEqual(result.records[0].city_region, "Ukraine")
 
     def test_parse_rss_items_reads_all_fields(self) -> None:
         items = parse_rss_items(SAMPLE_RSS)

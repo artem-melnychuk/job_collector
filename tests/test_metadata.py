@@ -5,6 +5,7 @@ import unittest
 from datetime import date, datetime
 
 from core.metadata import (
+    candidates_only_from_disallowed_countries,
     parse_date,
     resolve_relative_date,
     extract_location_from_text,
@@ -271,6 +272,17 @@ class MetadataTests(unittest.TestCase):
 
     def test_onsite_in_disallowed_country_is_a_noop_when_unconfigured(self) -> None:
         self.assertFalse(requires_onsite_in_disallowed_country("Hybrid", "Ukraine", {}))
+
+    def test_candidates_only_from_disallowed_countries(self) -> None:
+        # Values as Djinni shows them under "Countries where we consider
+        # candidates" (N-iX 2026-10-28: only "Ukraine").
+        exclusion = {"disallowed_onsite_countries": ["Ukraine", "India"]}
+        self.assertTrue(candidates_only_from_disallowed_countries("Ukraine", exclusion))
+        self.assertTrue(candidates_only_from_disallowed_countries("Ukraine, India", exclusion))
+        self.assertFalse(candidates_only_from_disallowed_countries("Countries of Europe or Ukraine", exclusion))
+        self.assertFalse(candidates_only_from_disallowed_countries("Ukraine, Portugal", exclusion))
+        self.assertFalse(candidates_only_from_disallowed_countries("", exclusion))
+        self.assertFalse(candidates_only_from_disallowed_countries("Ukraine", {}))
 
     def test_low_quality_listing_detects_scam_lead_funnel_phrasing(self) -> None:
         exclusion = {"low_quality_phrases": ["no experience needed", "learn to trade"]}

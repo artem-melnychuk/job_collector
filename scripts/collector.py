@@ -46,6 +46,7 @@ from core.config import load_configuration, select_queries
 from core.deduplication import deduplicate_records
 from core.logging import RunStats, write_run_log
 from core.metadata import (
+    candidates_only_from_disallowed_countries,
     extract_salary,
     has_disallowed_work_format,
     infer_country,
@@ -86,6 +87,12 @@ from core.storage import load_records, merge_records, save_records
 # their titles are Ukrainian/Russian, so the English query_matches title
 # check would wrongly reject legitimate results.
 CONTEXT_FILTERED_SOURCES = {"LinkedIn", "Welcome to the Jungle"}
+
+# Sources whose city_region lists the countries candidates may live in, not
+# the job's own location. Djinni reads it off the detail page (collectors/
+# djinni.py); elsewhere city_region is the office or job location, where a
+# bare "Ukraine" says nothing about who may apply.
+CANDIDATE_COUNTRY_SOURCES = {"Djinni"}
 
 # --source value -> the source name saved on records.
 SOURCE_NAMES = {
@@ -405,6 +412,12 @@ async def run_collection(args: argparse.Namespace) -> int:
                 filtered_out += 1
                 continue
             if requires_onsite_in_disallowed_country(record.work_format, record.country, exclusion):
+                filtered_out += 1
+                continue
+            if (
+                result.source in CANDIDATE_COUNTRY_SOURCES
+                and candidates_only_from_disallowed_countries(record.city_region, exclusion)
+            ):
                 filtered_out += 1
                 continue
             if is_low_quality_listing(record.title, record.full_text, exclusion):

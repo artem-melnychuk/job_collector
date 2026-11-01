@@ -191,6 +191,25 @@ def requires_onsite_in_disallowed_country(work_format: str, country: str, exclus
     return any(re.search(rf"\b{re.escape(value)}\b", country_lowered) for value in disallowed)
 
 
+def candidates_only_from_disallowed_countries(candidate_countries: str, exclusion: dict[str, Any]) -> bool:
+    """Flag a posting that considers candidates only from countries he won't be in.
+
+    Djinni pages state "Countries where we consider candidates" ("Ukraine",
+    "Countries of Europe or Ukraine"). A Remote posting open only to Ukraine
+    needs him to be there - the blocker ``disallowed_onsite_countries``
+    already covers for office roles, so the same list is used. Flags only
+    when every listed place is disallowed: a list that also names anything
+    else is left for a human to judge.
+    """
+    disallowed = {str(value).strip().casefold() for value in (exclusion.get("disallowed_onsite_countries") or [])}
+    places = [
+        place.strip()
+        for place in re.split(r",|\bor\b|\band\b", str(candidate_countries or "").casefold())
+        if place.strip()
+    ]
+    return bool(disallowed and places) and all(place in disallowed for place in places)
+
+
 def is_low_quality_listing(title: str, text: str, exclusion: dict[str, Any]) -> bool:
     """Flag scam/lead-funnel postings dressed up as trading/analyst roles."""
     combined = f"{title or ''}\n{text or ''}".casefold()

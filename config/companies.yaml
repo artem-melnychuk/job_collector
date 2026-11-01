@@ -152,3 +152,39 @@ career_boards:
   - company: "IWConnect"
     ats: "bamboohr"
     slug: "iwconnect"
+
+  # Added 2026-11-01 from a curated list of 835 companies with Eastern
+  # European roots (Airtable view, parsed into data/reference/
+  # eastern_roots_835.csv). Every company was probed on Greenhouse, Lever and
+  # BambooHR by guessed slug (results: data/reference/eastern_roots_boards.csv);
+  # 164 had a board. Added only boards that had a data, product or fraud
+  # analyst role open that day, in Europe or remote, with the company
+  # identified unambiguously (Greenhouse board name, or a unique name).
+  - company: "Nebius"
+    ats: "greenhouse"
+    slug: "nebius"
+  - company: "Wrike"
+    ats: "greenhouse"
+    slug: "wrike"
+  - company: "OLX"
+    ats: "lever"
+    slug: "olx"
+    host: "https://api.eu.lever.co"
+  - company: "TransferGo"
+    ats: "greenhouse"
+    slug: "transfergo"
+  - company: "Unlimit"
+    ats: "lever"
+    slug: "unlimit"
+  - company: "Wirex"
+    ats: "bamboohr"
+    slug: "wirex"
+  - company: "Altenar"
+    ats: "bamboohr"
+    slug: "altenar"
+  - company: "Xsolla"
+    ats: "lever"
+    slug: "xsolla"
+  - company: "SE Ranking"
+    ats: "greenhouse"
+    slug: "seranking"

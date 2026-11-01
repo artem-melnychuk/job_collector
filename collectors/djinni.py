@@ -27,12 +27,19 @@ wrong, since postings often open with a bolded restatement of the role
 ("Ми шукаємо **Data Analyst**...") or a bolded section header ("**Вимоги**"),
 not the company name. Confirmed 2026-09-09: the actual job detail page (a
 plain server-rendered HTML page, not a JS SPA) has a stable
-``<a href="/jobs/company-{slug}/">{Name}</a>`` link. ``fetch_company_name``
+``<a href="/jobs/company-{slug}/">{Name}</a>`` link. ``fetch_detail_fields``
 does one extra plain GET per record to read it, falling back to the old
 ``<strong>``-tag heuristic if that fetch or match fails. This trades away
 some of Djinni's collection speed (previously RSS-only, no per-record
 requests) for correct company names — worth it since `company` is a field
 the user actually reads when deciding where to apply.
+
+The same detail page also says where candidates may live ("Countries where
+we consider candidates": "Ukraine", "Countries of Europe or Ukraine"), which
+the RSS feed lacks. ``fetch_detail_fields`` reads it from that one request
+into ``city_region``, the same use Himalayas makes of the field for its
+eligible countries, so ``scripts/collector.py`` can drop postings open only
+to candidates in Ukraine (checked 2026-11-01).
 """
 
 from __future__ import annotations
@@ -113,7 +120,7 @@ def extract_company(description_html: str) -> str:
     Not a structured field in the RSS feed (unlike Greenhouse/Lever's explicit
     company field) — this is a heuristic and can miss postings that don't lead
     with the company name, or grab a bolded role/section title instead. Used
-    only when ``fetch_company_name`` (the reliable detail-page link) fails.
+    only when ``fetch_detail_fields`` (the reliable detail-page link) fails.
     """
     match = re.search(r"<strong>([^<]{2,80})</strong>", description_html)
     return clean_text(match.group(1)) if match else ""
@@ -132,7 +139,24 @@ def parse_company_from_detail_html(detail_html: str) -> str:
     return ""
 
 
-async def fetch_company_name(
+def parse_candidate_countries_from_detail_html(detail_html: str) -> str:
+    """Extract "Countries where we consider candidates" from a job detail page.
+
+    The value is a ``span.location-text`` sharing an ``<li>`` with a small
+    caption (the label, in whichever UI language the page came in). The page
+    has a second ``span.location-text`` for the office ("Ukraine (Kyiv,
+    Lviv)") with no caption beside it, so the first span on the page is not
+    necessarily the right one.
+    """
+    soup = BeautifulSoup(detail_html, "html.parser")
+    for span in soup.select("li span.location-text"):
+        item = span.find_parent("li")
+        if item is not None and item.select_one("div.font-size-extra-small"):
+            return clean_text(span.get_text(" ", strip=True))
+    return ""
+
+
+async def fetch_detail_fields(
     context: BrowserContext,
     url: str,
     *,
@@ -140,12 +164,12 @@ async def fetch_company_name(
     retry_attempts: int,
     delay_min_seconds: float,
     delay_max_seconds: float,
-) -> str:
-    """Read the real company name off the job detail page's stable profile link.
+) -> tuple[str, str]:
+    """Read (company name, candidate countries) off the job detail page.
 
     Best-effort: any failure (network error, unexpected markup) just returns
-    "" so the caller can fall back to the RSS-description heuristic instead
-    of failing the whole record.
+    empty strings so the caller can fall back to the RSS-description
+    heuristic instead of failing the whole record.
     """
     try:
         response = await get_with_retry(
@@ -154,8 +178,8 @@ async def fetch_company_name(
         )
         detail_html = await response.text()
     except Exception:
-        return ""
-    return parse_company_from_detail_html(detail_html)
+        return "", ""
+    return parse_company_from_detail_html(detail_html), parse_candidate_countries_from_detail_html(detail_html)
 
 
 def record_from_item(item: dict[str, str], query: dict[str, str]) -> JobRecord:
@@ -229,12 +253,14 @@ class DjinniCollector(BaseCollector):
                         continue
                     seen_urls.add(item["link"])
                     record = record_from_item(item, query)
-                    company = await fetch_company_name(
+                    company, candidate_countries = await fetch_detail_fields(
                         context, item["link"], timeout_ms=timeout_ms, retry_attempts=retry_attempts,
                         delay_min_seconds=delay_min, delay_max_seconds=delay_max,
                     )
                     if company:
                         record = replace(record, company=company)
+                    if candidate_countries:
+                        record = replace(record, city_region=candidate_countries)
                     result.records.append(record)
                     await asyncio.sleep(random.uniform(delay_min, max(delay_min, delay_max)))
             except Exception as error:

@@ -261,7 +261,9 @@ exclusion:
   # (Coinbase, Hyderabad — Hybrid) and Ukraine (BRDO, Kyiv — Hybrid;
   # relocating to Ukraine specifically is off the table even though most
   # Djinni postings are Ukraine-based and otherwise get the benefit of the
-  # doubt on skill/experience gaps).
+  # doubt on skill/experience gaps). Since 2026-11-01 the same list also
+  # drops Djinni postings whose "Countries where we consider candidates" names
+  # only these countries (core/metadata.py:candidates_only_from_disallowed_countries).
   disallowed_onsite_countries:
     - "Ukraine"
     - "India"
